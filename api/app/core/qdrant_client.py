@@ -48,6 +48,44 @@ class QdrantStoreClient:
             return
         await self._client.upsert(collection_name=collection_name, points=points, wait=False)
 
+    async def query_dense(
+        self,
+        collection_name: str,
+        vector: list[float],
+        query_filter: models.Filter,
+        limit: int,
+    ) -> list[models.ScoredPoint]:
+        """Query the dense vector field in a collection."""
+
+        response = await self._client.query_points(
+            collection_name=collection_name,
+            query=vector,
+            using="dense",
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return list(response.points)
+
+    async def query_sparse(
+        self,
+        collection_name: str,
+        vector: models.SparseVector,
+        query_filter: models.Filter,
+        limit: int,
+    ) -> list[models.ScoredPoint]:
+        """Query the sparse keyword vector field in a collection."""
+
+        response = await self._client.query_points(
+            collection_name=collection_name,
+            query=vector,
+            using="sparse",
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return list(response.points)
+
     async def close(self) -> None:
         """Close Qdrant HTTP and gRPC resources."""
 

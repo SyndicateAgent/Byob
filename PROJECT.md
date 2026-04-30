@@ -1,4 +1,4 @@
-# 企业级知识库平台 (Knowledge Base Platform)
+# BYOB 企业级知识库平台
 
 你是一名资深的后端平台工程师，负责从零构建一个**企业级多模态知识库平台**。这个系统作为基础设施层，对外提供标准化 API，供任意 AI Agent 框架（LangGraph、LlamaIndex、Dify、自研 Agent 等）调用。
 
@@ -243,7 +243,7 @@
 
 ```python
 # Python SDK 示例
-from kb_platform import KnowledgeBaseClient
+from byob import KnowledgeBaseClient
 
 client = KnowledgeBaseClient(
     api_key="kb_xxx",
@@ -283,7 +283,7 @@ await job.wait_for_completion()
 ## 五、项目目录结构
 
 ```
-kb-platform/
+byob/
 ├── docker-compose.yml
 ├── docker-compose.prod.yml
 ├── .env.example
@@ -357,7 +357,7 @@ kb-platform/
 │
 ├── sdks/                       # 官方 SDK
 │   ├── python/
-│   │   ├── kb_platform/
+│   │   ├── byob/
 │   │   ├── tests/
 │   │   └── pyproject.toml
 │   └── typescript/
@@ -582,7 +582,7 @@ CREATE TABLE usage_daily (
       "message": "Knowledge base not found",
       "detail": {"kb_id": "..."},
       "request_id": "req_xxx",
-      "type": "https://docs.kb-platform.com/errors/RESOURCE_NOT_FOUND"
+      "type": "https://docs.byob.dev/errors/RESOURCE_NOT_FOUND"
     }
   }
 ```
@@ -631,13 +631,13 @@ CREATE TABLE usage_daily (
 - [x] 失败重试 + 状态追踪 + 进度查询
 
 ### Phase 4: 检索引擎 (Week 5)
-- [ ] Qdrant dense vector 检索(多 Collection 并行)
-- [ ] Qdrant sparse keyword 检索
-- [ ] RRF 融合
-- [ ] Rerank 服务
-- [ ] 缓存层
-- [ ] 标准检索 API(`/retrieval/search`)
-- [ ] 完整的 retrieval_logs 写入
+- [x] Qdrant dense vector 检索(多 Collection 并行)
+- [x] Qdrant sparse keyword 检索
+- [x] RRF 融合
+- [x] Rerank 服务
+- [x] 缓存层
+- [x] 标准检索 API(`/retrieval/search`)
+- [x] 完整的 retrieval_logs 写入
 
 ### Phase 5: 高级检索能力 (Week 6)
 - [ ] Query 改写

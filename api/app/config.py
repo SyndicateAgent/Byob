@@ -10,14 +10,14 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "kb-platform"
+    app_name: str = "byob"
     app_env: Literal["local", "test", "staging", "production"] = "local"
     app_version: str = "0.1.0"
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
 
     database_url: str = Field(
-        default="postgresql+asyncpg://kb_platform:kb_platform@localhost:5432/kb_platform"
+        default="postgresql+asyncpg://byob:byob@localhost:5432/byob"
     )
     redis_url: str = "redis://localhost:6379/0"
     qdrant_url: AnyUrl = AnyUrl("http://localhost:6333")
@@ -25,10 +25,14 @@ class Settings(BaseSettings):
     minio_endpoint_url: AnyUrl = AnyUrl("http://localhost:9000")
     minio_access_key: str = "minioadmin"
     minio_secret_key: SecretStr = SecretStr("minioadmin")
-    minio_bucket: str = "kb-platform"
+    minio_bucket: str = "byob"
     embedding_endpoint_url: AnyUrl = AnyUrl("http://localhost:7997")
     embedding_model: str = "BAAI/bge-m3"
     embedding_dimension: int = 1024
+    rerank_endpoint_url: AnyUrl = AnyUrl("http://localhost:7998")
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_enabled: bool = False
+    retrieval_cache_ttl_seconds: int = 300
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
 

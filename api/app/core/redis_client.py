@@ -47,6 +47,17 @@ class RedisClient:
         await self._client.expire(key, window_seconds)
         return True, 0
 
+    async def get_text(self, key: str) -> str | None:
+        """Return a cached text value if present."""
+
+        value = await self._client.get(key)
+        return str(value) if value is not None else None
+
+    async def set_text(self, key: str, value: str, ttl_seconds: int) -> None:
+        """Set a cached text value with an expiry."""
+
+        await self._client.set(key, value, ex=ttl_seconds)
+
     async def close(self) -> None:
         """Close the Redis connection pool."""
 

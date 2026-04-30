@@ -12,7 +12,7 @@ class ErrorDetail(BaseModel):
     message: str = Field(examples=["Knowledge base not found"])
     detail: dict[str, Any] | None = None
     request_id: str
-    type: str = Field(examples=["https://docs.kb-platform.com/errors/RESOURCE_NOT_FOUND"])
+    type: str = Field(examples=["https://docs.byob.dev/errors/RESOURCE_NOT_FOUND"])
 
 
 class ErrorResponse(BaseModel):

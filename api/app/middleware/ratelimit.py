@@ -47,7 +47,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "message": "API key rate limit exceeded",
                     "detail": {"retry_after": retry_after},
                     "request_id": request_id,
-                    "type": "https://docs.kb-platform.com/errors/RATE_LIMITED",
+                    "type": "https://docs.byob.dev/errors/RATE_LIMITED",
                 }
             },
             headers={"Retry-After": str(retry_after)},

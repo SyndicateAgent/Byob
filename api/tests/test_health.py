@@ -21,7 +21,7 @@ async def test_healthz_returns_request_id_and_service_state() -> None:
     assert response.json() == {
         "request_id": "req_test",
         "status": "ok",
-        "service": "kb-platform",
+        "service": "byob",
         "environment": "test",
         "version": "0.1.0",
         "checks": [{"name": "app", "status": "ok", "latency_ms": None}],
@@ -39,7 +39,7 @@ async def test_metrics_endpoint_exposes_prometheus_text() -> None:
 
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
-    assert "kb_platform_http_requests_total" in response.text
+    assert "byob_http_requests_total" in response.text
 
 
 def test_aggregate_health_status_degrades_when_dependency_is_down() -> None:

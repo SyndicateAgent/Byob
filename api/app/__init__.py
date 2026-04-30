@@ -1,1 +1,1 @@
-"""Application package for the knowledge base platform API."""
+"""Application package for the BYOB API."""

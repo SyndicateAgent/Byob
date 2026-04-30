@@ -21,7 +21,7 @@
 - A running Celery worker and embedding endpoint are required for real asynchronous document processing.
 - URL ingestion uses a minimal HTML-to-text fallback and should be hardened before production crawling.
 
-## Next Phase
+## Follow-Up Completed In Phase 4
 
 - Implement retrieval APIs over Qdrant dense and sparse vectors.
 - Add RRF or weighted fusion for hybrid results.

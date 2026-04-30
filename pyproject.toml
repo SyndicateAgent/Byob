@@ -1,7 +1,7 @@
 [project]
-name = "kb-platform"
+name = "byob"
 version = "0.1.0"
-description = "Enterprise knowledge base platform/BaaS for RAG infrastructure."
+description = "BYOB enterprise knowledge base BaaS for RAG infrastructure."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

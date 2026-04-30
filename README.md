@@ -1,6 +1,6 @@
-# Knowledge Base Platform
+# BYOB
 
-Enterprise knowledge base platform/BaaS for RAG infrastructure. This service exposes standardized APIs for external Agent frameworks and does not implement Agent orchestration, conversation state, or prompt templates.
+BYOB is an enterprise knowledge base BaaS for RAG infrastructure. This service exposes standardized APIs for external Agent frameworks and does not implement Agent orchestration, conversation state, or prompt templates.
 
 ## Local Development
 
@@ -30,6 +30,10 @@ Phase 3 management endpoints:
 - `POST /api/v1/knowledge-bases/{kb_id}/documents/text`
 - `POST /api/v1/knowledge-bases/{kb_id}/documents/url`
 - `GET /api/v1/documents/{id}/chunks`
+
+Retrieval endpoint:
+
+- `POST /api/v1/retrieval/search`
 
 Infrastructure services started by Docker Compose:
 

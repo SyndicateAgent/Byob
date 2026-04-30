@@ -1,1 +1,1 @@
-"""FastAPI service package for the knowledge base platform."""
+"""FastAPI service package for BYOB."""

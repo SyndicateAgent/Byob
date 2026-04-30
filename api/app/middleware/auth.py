@@ -78,7 +78,7 @@ class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
                     "message": message,
                     "detail": None,
                     "request_id": request_id,
-                    "type": "https://docs.kb-platform.com/errors/UNAUTHORIZED",
+                    "type": "https://docs.byob.dev/errors/UNAUTHORIZED",
                 }
             },
             headers={"WWW-Authenticate": "Bearer"},

@@ -7,12 +7,12 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 REQUEST_COUNT = Counter(
-    "kb_platform_http_requests_total",
+    "byob_http_requests_total",
     "Total HTTP requests handled by the API service.",
     ["method", "path", "status_code"],
 )
 REQUEST_LATENCY = Histogram(
-    "kb_platform_http_request_duration_seconds",
+    "byob_http_request_duration_seconds",
     "HTTP request latency in seconds.",
     ["method", "path"],
 )
