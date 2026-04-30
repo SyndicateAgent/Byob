@@ -33,6 +33,28 @@ def test_text_parser_and_chunker_create_chunks() -> None:
     assert all(chunk.content for chunk in chunks)
 
 
+def test_chunker_splits_cjk_text_without_spaces() -> None:
+    """PDF text extraction often returns long CJK paragraphs without spaces."""
+
+    text = "这是一个没有空格的中文段落" * 20
+    chunks = chunk_text(text, chunk_size=30, chunk_overlap=5)
+
+    assert len(chunks) > 1
+    assert all(len(chunk.content) <= 30 for chunk in chunks[:-1])
+    assert chunks[1].content.startswith(chunks[0].content[-5:])
+
+
+def test_chunker_splits_cjk_text_with_pdf_line_whitespace() -> None:
+    """CJK PDF extraction may insert whitespace without useful word boundaries."""
+
+    line = "这是一个带有PDF换行空白的中文段落"
+    text = "\n".join([line for _ in range(20)])
+    chunks = chunk_text(text, chunk_size=40, chunk_overlap=5)
+
+    assert len(chunks) > 1
+    assert all(len(chunk.content) <= 40 for chunk in chunks[:-1])
+
+
 def test_qdrant_point_payload_excludes_chunk_content() -> None:
     """Qdrant payload stores identifiers and filters, not source text."""
 

@@ -28,11 +28,11 @@ class Settings(BaseSettings):
     minio_secret_key: SecretStr = SecretStr("minioadmin")
     minio_bucket: str = "byob"
     embedding_endpoint_url: AnyUrl = AnyUrl("http://localhost:7997")
-    embedding_model: str = "BAAI/bge-m3"
-    embedding_dimension: int = 1024
+    embedding_model: str = "BAAI/bge-small-zh-v1.5"
+    embedding_dimension: int = 512
     rerank_endpoint_url: AnyUrl = AnyUrl("http://localhost:7998")
-    rerank_model: str = "BAAI/bge-reranker-v2-m3"
-    rerank_enabled: bool = False
+    rerank_model: str = "BAAI/bge-reranker-base"
+    rerank_enabled: bool = True
     retrieval_cache_ttl_seconds: int = 300
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"

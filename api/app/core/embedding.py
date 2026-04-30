@@ -9,7 +9,7 @@ class EmbeddingClient:
     def __init__(self, settings: Settings) -> None:
         self._endpoint_url = str(settings.embedding_endpoint_url).rstrip("/")
         self.model = settings.embedding_model
-        self._client = httpx.AsyncClient(timeout=30.0, trust_env=False)
+        self._client = httpx.AsyncClient(timeout=120.0, trust_env=False)
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed texts with the configured embedding service."""

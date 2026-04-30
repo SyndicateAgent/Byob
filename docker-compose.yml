@@ -76,8 +76,74 @@ services:
       retries: 5
       start_period: 10s
 
+  embedding:
+    image: ${INFINITY_IMAGE:-michaelf34/infinity:latest-cpu}
+    container_name: byob-embedding
+    restart: unless-stopped
+    command:
+      [
+        "v2",
+        "--model-id",
+        "${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}",
+        "--engine",
+        "torch",
+        "--port",
+        "7997",
+      ]
+    environment:
+      HF_HOME: /app/.cache/huggingface
+      DO_NOT_TRACK: "1"
+    ports:
+      - "${EMBEDDING_PORT:-7997}:7997"
+    volumes:
+      - embedding_cache:/app/.cache
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json, urllib.request; req=urllib.request.Request('http://localhost:7997/embeddings', data=json.dumps({'model':'${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}','input':['health check']}).encode(), headers={'Content-Type':'application/json'}); urllib.request.urlopen(req, timeout=30).read()\"",
+        ]
+      interval: 30s
+      timeout: 35s
+      retries: 20
+      start_period: 120s
+
+  rerank:
+    image: ${INFINITY_IMAGE:-michaelf34/infinity:latest-cpu}
+    container_name: byob-rerank
+    restart: unless-stopped
+    command:
+      [
+        "v2",
+        "--model-id",
+        "${RERANK_MODEL:-BAAI/bge-reranker-base}",
+        "--engine",
+        "torch",
+        "--port",
+        "7998",
+      ]
+    environment:
+      HF_HOME: /app/.cache/huggingface
+      DO_NOT_TRACK: "1"
+    ports:
+      - "${RERANK_PORT:-7998}:7998"
+    volumes:
+      - rerank_cache:/app/.cache
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json, urllib.request; req=urllib.request.Request('http://localhost:7998/rerank', data=json.dumps({'model':'${RERANK_MODEL:-BAAI/bge-reranker-base}','query':'health','documents':['health check']}).encode(), headers={'Content-Type':'application/json'}); urllib.request.urlopen(req, timeout=30).read()\"",
+        ]
+      interval: 30s
+      timeout: 35s
+      retries: 20
+      start_period: 120s
+
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
   minio_data:
+  embedding_cache:
+  rerank_cache:

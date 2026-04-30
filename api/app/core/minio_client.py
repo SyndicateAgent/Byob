@@ -3,8 +3,18 @@ from urllib.parse import urljoin
 
 import aioboto3  # type: ignore[import-untyped]
 import httpx
+from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
 from api.app.config import Settings
+
+BUCKET_EXISTS_ERROR_CODES = {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}
+
+
+def is_bucket_exists_error(exc: ClientError) -> bool:
+    """Return whether S3 reports that bucket creation is already satisfied."""
+
+    error = exc.response.get("Error", {})
+    return error.get("Code") in BUCKET_EXISTS_ERROR_CODES
 
 
 class MinioClient:
@@ -34,7 +44,11 @@ class MinioClient:
             aws_access_key_id=self._access_key,
             aws_secret_access_key=self._secret_key,
         ) as client:
-            await client.create_bucket(Bucket=self._bucket)
+            try:
+                await client.create_bucket(Bucket=self._bucket)
+            except ClientError as exc:
+                if not is_bucket_exists_error(exc):
+                    raise
             await client.put_object(
                 Bucket=self._bucket,
                 Key=key,

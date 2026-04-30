@@ -3,10 +3,12 @@ from uuid import UUID
 
 import jwt
 from fastapi import HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.app.config import Settings
 from api.app.core.security import decode_access_token
+from api.app.models.user import User
 from api.app.schemas.auth import CurrentUser
 
 
@@ -36,7 +38,7 @@ async def get_current_user(request: Request) -> CurrentUser:
         user_id = UUID(str(payload["sub"]))
         tenant_id = UUID(str(payload["tenant_id"]))
         email = str(payload["email"])
-        role = str(payload["role"])
+        _role_claim = str(payload["role"])
     except (KeyError, ValueError, jwt.PyJWTError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -44,7 +46,23 @@ async def get_current_user(request: Request) -> CurrentUser:
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
+    session_factory: async_sessionmaker[AsyncSession] = request.app.state.db_session_factory
+    async with session_factory() as session:
+        user = await session.scalar(
+            select(User).where(
+                User.id == user_id,
+                User.tenant_id == tenant_id,
+                User.email == email,
+            )
+        )
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User no longer exists",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     request.state.tenant_id = tenant_id
     request.state.user_id = user_id
-    request.state.user_role = role
-    return CurrentUser(id=user_id, tenant_id=tenant_id, email=email, role=role)
+    request.state.user_role = user.role
+    return CurrentUser(id=user.id, tenant_id=user.tenant_id, email=user.email, role=user.role)

@@ -12,6 +12,10 @@ uv run alembic upgrade head
 uv run uvicorn api.app.main:app --reload
 ```
 
+Docker Compose also starts Infinity-backed embedding and rerank services. The first startup downloads
+`BAAI/bge-small-zh-v1.5` and `BAAI/bge-reranker-base` into Docker volumes, so it can take several minutes.
+Wait until `docker compose ps` shows both services as healthy before reprocessing documents.
+
 Create the first management admin after migrations. If this reports missing tables, run `uv run alembic upgrade head` against the same `DATABASE_URL` first:
 
 ```powershell
@@ -27,6 +31,9 @@ Run the ingestion worker in a separate terminal when processing documents:
 ```powershell
 uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO
 ```
+
+On Windows the worker defaults to Celery's `solo` pool because the process pool can fail with
+`billiard` handle errors.
 
 Run the management console in a separate terminal:
 
@@ -67,6 +74,8 @@ Infrastructure services started by Docker Compose:
 - Redis 7 on `localhost:6379`
 - Qdrant on `localhost:6333` and `localhost:6334`
 - MinIO on `localhost:9000`, console on `localhost:9001`
+- Infinity embedding on `localhost:7997`
+- Infinity rerank on `localhost:7998`
 
 Quality checks:
 

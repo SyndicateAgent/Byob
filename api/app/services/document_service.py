@@ -1,7 +1,7 @@
 from hashlib import sha256
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.app.models.chunk import Chunk
@@ -147,6 +147,7 @@ async def reset_document_for_reprocess(session: AsyncSession, document: Document
     document.status = "pending"
     document.error_message = None
     document.chunk_count = 0
+    await refresh_knowledge_base_counts(session, document.kb_id)
     await session.commit()
     await session.refresh(document)
     return document
@@ -155,5 +156,25 @@ async def reset_document_for_reprocess(session: AsyncSession, document: Document
 async def delete_document(session: AsyncSession, document: Document) -> None:
     """Delete a document and its chunks."""
 
+    kb_id = document.kb_id
     await session.delete(document)
+    await session.flush()
+    await refresh_knowledge_base_counts(session, kb_id)
     await session.commit()
+
+
+async def refresh_knowledge_base_counts(session: AsyncSession, kb_id: UUID) -> None:
+    """Synchronize denormalized knowledge base counters with persisted rows."""
+
+    knowledge_base = await session.scalar(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+    if knowledge_base is None:
+        return
+
+    document_count = await session.scalar(
+        select(func.count()).select_from(Document).where(Document.kb_id == kb_id)
+    )
+    chunk_count = await session.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.kb_id == kb_id)
+    )
+    knowledge_base.document_count = document_count or 0
+    knowledge_base.chunk_count = chunk_count or 0

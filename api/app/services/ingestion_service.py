@@ -16,6 +16,7 @@ from api.app.db.session import create_engine, create_session_factory
 from api.app.models.chunk import Chunk
 from api.app.models.document import Document
 from api.app.models.knowledge_base import KnowledgeBase
+from api.app.services.document_service import refresh_knowledge_base_counts
 from workers.chunkers.semantic_chunker import chunk_text
 from workers.parsers.registry import parse_document_bytes
 
@@ -98,9 +99,7 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             current_document.status = "completed"
             current_document.error_message = None
             current_document.chunk_count = len(chunks)
-            current_kb.chunk_count = (
-                max(0, current_kb.chunk_count - document.chunk_count) + len(chunks)
-            )
+            await refresh_knowledge_base_counts(session, current_kb.id)
             await session.commit()
 
         await qdrant_client.ensure_hybrid_collection(
