@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     minio_bucket: str = "kb-platform"
 
     prometheus_metrics_enabled: bool = True
+    dependency_health_checks_enabled: bool = True
+    dependency_health_timeout_seconds: float = 2.0
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
 
 
 @lru_cache(maxsize=1)

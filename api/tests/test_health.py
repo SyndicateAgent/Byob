@@ -2,14 +2,16 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from api.app.config import Settings
+from api.app.core.health import aggregate_health_status
 from api.app.main import create_app
+from api.app.schemas.health import HealthCheck
 
 
 @pytest.mark.asyncio
 async def test_healthz_returns_request_id_and_service_state() -> None:
     """Health endpoint returns a stable public response contract."""
 
-    app = create_app(Settings(app_env="test"))
+    app = create_app(Settings(app_env="test", dependency_health_checks_enabled=False))
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/healthz", headers={"X-Request-ID": "req_test"})
@@ -30,7 +32,7 @@ async def test_healthz_returns_request_id_and_service_state() -> None:
 async def test_metrics_endpoint_exposes_prometheus_text() -> None:
     """Metrics endpoint returns Prometheus text exposition format."""
 
-    app = create_app(Settings(app_env="test"))
+    app = create_app(Settings(app_env="test", dependency_health_checks_enabled=False))
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/metrics")
@@ -38,3 +40,14 @@ async def test_metrics_endpoint_exposes_prometheus_text() -> None:
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
     assert "kb_platform_http_requests_total" in response.text
+
+
+def test_aggregate_health_status_degrades_when_dependency_is_down() -> None:
+    """Aggregate status reflects degraded dependency health."""
+
+    checks = [
+        HealthCheck(name="app", status="ok"),
+        HealthCheck(name="postgres", status="down", latency_ms=1.2),
+    ]
+
+    assert aggregate_health_status(checks) == "degraded"
