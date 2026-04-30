@@ -13,7 +13,7 @@ uv run uvicorn api.app.main:app --reload
 ```
 
 Docker Compose also starts Infinity-backed embedding and rerank services. The first startup downloads
-`BAAI/bge-small-zh-v1.5` and `BAAI/bge-reranker-base` into Docker volumes, so it can take several minutes.
+`BAAI/bge-m3` and `BAAI/bge-reranker-base` into Docker volumes, so it can take several minutes.
 Wait until `docker compose ps` shows both services as healthy before reprocessing documents.
 
 Create the first management admin after migrations. If this reports missing tables, run `uv run alembic upgrade head` against the same `DATABASE_URL` first:

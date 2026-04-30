@@ -84,7 +84,7 @@ services:
       [
         "v2",
         "--model-id",
-        "${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}",
+        "${EMBEDDING_MODEL:-BAAI/bge-m3}",
         "--engine",
         "torch",
         "--port",
@@ -101,7 +101,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import json, urllib.request; req=urllib.request.Request('http://localhost:7997/embeddings', data=json.dumps({'model':'${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}','input':['health check']}).encode(), headers={'Content-Type':'application/json'}); urllib.request.urlopen(req, timeout=30).read()\"",
+          "python -c \"import json, urllib.request; req=urllib.request.Request('http://localhost:7997/embeddings', data=json.dumps({'model':'${EMBEDDING_MODEL:-BAAI/bge-m3}','input':['health check']}).encode(), headers={'Content-Type':'application/json'}); urllib.request.urlopen(req, timeout=30).read()\"",
         ]
       interval: 30s
       timeout: 35s

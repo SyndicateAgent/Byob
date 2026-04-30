@@ -11,8 +11,8 @@ class KnowledgeBaseCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    embedding_model: str = Field(default="BAAI/bge-small-zh-v1.5", min_length=1, max_length=100)
-    embedding_dim: int = Field(default=512, ge=1)
+    embedding_model: str = Field(default="BAAI/bge-m3", min_length=1, max_length=100)
+    embedding_dim: int = Field(default=1024, ge=1)
     chunk_size: int = Field(default=512, ge=128)
     chunk_overlap: int = Field(default=50, ge=0)
     retrieval_config: dict[str, object] = Field(default_factory=dict)

@@ -23,10 +23,8 @@ class KnowledgeBase(Base):
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    embedding_model: Mapped[str] = mapped_column(
-        String(100), server_default="BAAI/bge-small-zh-v1.5"
-    )
-    embedding_dim: Mapped[int] = mapped_column(Integer, server_default="512")
+    embedding_model: Mapped[str] = mapped_column(String(100), server_default="BAAI/bge-m3")
+    embedding_dim: Mapped[int] = mapped_column(Integer, server_default="1024")
     chunk_size: Mapped[int] = mapped_column(Integer, server_default="512")
     chunk_overlap: Mapped[int] = mapped_column(Integer, server_default="50")
     retrieval_config: Mapped[dict[str, object]] = jsonb_default()
