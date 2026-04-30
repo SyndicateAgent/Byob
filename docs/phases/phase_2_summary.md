@@ -18,7 +18,7 @@
 - API key `last_used_at` is updated during authentication. This is correct but currently synchronous with the request path.
 - A management user must exist in PostgreSQL before `/api/v1/auth/login` can issue JWTs; user provisioning remains outside this phase.
 
-## Next Phase
+## Follow-Up Completed In Phase 3
 
 - Add knowledge base CRUD endpoints with strict tenant filtering.
 - Add document ingestion endpoints and background processing foundations.

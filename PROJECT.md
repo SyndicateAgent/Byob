@@ -622,13 +622,13 @@ CREATE TABLE usage_daily (
 - [x] 用量统计基础
 
 ### Phase 3: 数据接入 Pipeline (Week 3-4)
-- [ ] 知识库 CRUD API
-- [ ] 文档上传 API(文件、文本、URL)
-- [ ] 文档解析器(PDF、DOCX、MD、TXT)
-- [ ] 智能分块器(语义分块 + 父子块)
-- [ ] Embedding 服务(Infinity 部署 BGE-M3)
-- [ ] Celery 任务链:解析 → 分块 → 向量化 → 入库
-- [ ] 失败重试 + 状态追踪 + 进度查询
+- [x] 知识库 CRUD API
+- [x] 文档上传 API(文件、文本、URL)
+- [x] 文档解析器(PDF、DOCX、MD、TXT)
+- [x] 智能分块器(语义分块 + 父子块)
+- [x] Embedding 服务(Infinity 部署 BGE-M3)
+- [x] Celery 任务链:解析 → 分块 → 向量化 → 入库
+- [x] 失败重试 + 状态追踪 + 进度查询
 
 ### Phase 4: 检索引擎 (Week 5)
 - [ ] Qdrant dense vector 检索(多 Collection 并行)

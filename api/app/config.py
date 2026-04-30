@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     minio_access_key: str = "minioadmin"
     minio_secret_key: SecretStr = SecretStr("minioadmin")
     minio_bucket: str = "kb-platform"
+    embedding_endpoint_url: AnyUrl = AnyUrl("http://localhost:7997")
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_dimension: int = 1024
+    celery_broker_url: str = "redis://localhost:6379/1"
+    celery_result_backend: str = "redis://localhost:6379/2"
 
     prometheus_metrics_enabled: bool = True
     dependency_health_checks_enabled: bool = True

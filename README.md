@@ -12,10 +12,24 @@ uv run alembic upgrade head
 uv run uvicorn api.app.main:app --reload
 ```
 
+Run the ingestion worker in a separate terminal when processing documents:
+
+```powershell
+uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO
+```
+
 Health and metrics endpoints:
 
 - `GET /healthz`
 - `GET /metrics`
+
+Phase 3 management endpoints:
+
+- `POST /api/v1/knowledge-bases`
+- `POST /api/v1/knowledge-bases/{kb_id}/documents`
+- `POST /api/v1/knowledge-bases/{kb_id}/documents/text`
+- `POST /api/v1/knowledge-bases/{kb_id}/documents/url`
+- `GET /api/v1/documents/{id}/chunks`
 
 Infrastructure services started by Docker Compose:
 

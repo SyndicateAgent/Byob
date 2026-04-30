@@ -33,7 +33,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         str(settings.qdrant_url), settings.dependency_health_timeout_seconds
     )
     app.state.minio_client = MinioClient(
-        str(settings.minio_endpoint_url), settings.dependency_health_timeout_seconds
+        str(settings.minio_endpoint_url),
+        settings.dependency_health_timeout_seconds,
+        settings,
     )
 
     try:
