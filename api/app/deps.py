@@ -1,7 +1,13 @@
 from collections.abc import AsyncIterator
+from uuid import UUID
 
-from fastapi import Request
+import jwt
+from fastapi import HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from api.app.config import Settings
+from api.app.core.security import decode_access_token
+from api.app.schemas.auth import CurrentUser
 
 
 async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -10,3 +16,35 @@ async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
     session_factory: async_sessionmaker[AsyncSession] = request.app.state.db_session_factory
     async with session_factory() as session:
         yield session
+
+
+async def get_current_user(request: Request) -> CurrentUser:
+    """Return the management user represented by a bearer JWT."""
+
+    authorization = request.headers.get("Authorization")
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = authorization.removeprefix("Bearer ").strip()
+    settings: Settings = request.app.state.settings
+    try:
+        payload = decode_access_token(settings, token)
+        user_id = UUID(str(payload["sub"]))
+        tenant_id = UUID(str(payload["tenant_id"]))
+        email = str(payload["email"])
+        role = str(payload["role"])
+    except (KeyError, ValueError, jwt.PyJWTError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    request.state.tenant_id = tenant_id
+    request.state.user_id = user_id
+    request.state.user_role = role
+    return CurrentUser(id=user_id, tenant_id=tenant_id, email=email, role=role)

@@ -4,15 +4,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from api.app.api.health import router as health_router
+from api.app.api.v1 import router as api_v1_router
 from api.app.config import Settings, get_settings
-from api.app.core.es_client import ElasticsearchClient
 from api.app.core.logging import configure_logging
 from api.app.core.metrics import MetricsMiddleware
 from api.app.core.minio_client import MinioClient
 from api.app.core.qdrant_client import QdrantStoreClient
 from api.app.core.redis_client import RedisClient
 from api.app.db.session import create_engine, create_session_factory
+from api.app.middleware.auth import ApiKeyAuthMiddleware
+from api.app.middleware.ratelimit import RateLimitMiddleware
 from api.app.middleware.request_context import RequestContextMiddleware
+from api.app.middleware.tenant import TenantContextMiddleware
 
 
 @asynccontextmanager
@@ -29,9 +32,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.qdrant_client = QdrantStoreClient(
         str(settings.qdrant_url), settings.dependency_health_timeout_seconds
     )
-    app.state.elasticsearch_client = ElasticsearchClient(
-        str(settings.elasticsearch_url), settings.dependency_health_timeout_seconds
-    )
     app.state.minio_client = MinioClient(
         str(settings.minio_endpoint_url), settings.dependency_health_timeout_seconds
     )
@@ -41,7 +41,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await app.state.redis_client.close()
         await app.state.qdrant_client.close()
-        await app.state.elasticsearch_client.close()
         await app.state.minio_client.close()
         await db_engine.dispose()
 
@@ -62,8 +61,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = resolved_settings
 
     app.add_middleware(MetricsMiddleware, enabled=resolved_settings.prometheus_metrics_enabled)
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(TenantContextMiddleware)
+    app.add_middleware(ApiKeyAuthMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.include_router(health_router)
+    app.include_router(api_v1_router)
 
     return app
 

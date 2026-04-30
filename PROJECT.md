@@ -32,7 +32,7 @@
 | 向量数据库 | **Qdrant** | 向量存储与 ANN 检索 |
 | 关系数据库 | **PostgreSQL 16** | 业务数据、元数据、审计 |
 | 缓存/队列 | **Redis 7** | 缓存、Celery broker |
-| 全文检索 | **Elasticsearch 8** | BM25 关键词检索 |
+| 检索引擎 | **Qdrant** | Dense vector + sparse keyword hybrid retrieval |
 | 对象存储 | **MinIO** | 原始文件存储 |
 | 后端框架 | **FastAPI** + **Pydantic v2** | API 服务 |
 | ORM | **SQLAlchemy 2.0** (async) + **Alembic** | 数据库操作与迁移 |
@@ -197,7 +197,7 @@
     "stages": {
       "embedding_ms": 12,
       "vector_search_ms": 45,
-      "bm25_search_ms": 34,
+      "sparse_search_ms": 34,
       "rerank_ms": 120,
       "fetch_content_ms": 23
     },
@@ -323,7 +323,6 @@ kb-platform/
 │   │   ├── core/
 │   │   │   ├── qdrant_client.py
 │   │   │   ├── redis_client.py
-│   │   │   ├── es_client.py
 │   │   │   ├── minio_client.py
 │   │   │   ├── embedder.py
 │   │   │   ├── reranker.py
@@ -539,7 +538,7 @@ CREATE TABLE usage_daily (
 2. 限流检查(基于 Redis 滑动窗口)
 3. 输入参数校验
 4. 缓存检查(Redis,TTL 5 分钟,key 包含 tenant_id)
-5. 并行执行:向量检索(Qdrant) + BM25 检索(ES)
+5. 在 Qdrant 中并行执行 dense vector 检索 + sparse keyword 检索
 6. RRF 融合(k=60)
 7. 从 PG 批量获取 chunk content
 8. Rerank 精排(BGE-Reranker)
@@ -553,6 +552,7 @@ CREATE TABLE usage_daily (
 - 批量写入用 `upsert(points=[...], wait=False)`
 - 查询必须带 `tenant_id` filter
 - 必建索引字段:`tenant_id`、`doc_id`、`chunk_type`、`tags`、`created_at`
+- 每个 Collection 同时维护 dense vector 和 sparse vector,关键词检索不再依赖外部全文检索服务
 
 ### 4. 分块策略
 - 默认语义分块(按段落+标题层级)
@@ -606,20 +606,20 @@ CREATE TABLE usage_daily (
 ## 八、开发阶段(按顺序执行)
 
 ### Phase 1: 基础设施 (Week 1)
-- [ ] 项目骨架(uv 项目、目录结构、配置管理)
-- [ ] Docker Compose 编排所有基础服务
-- [ ] PostgreSQL Schema + Alembic 迁移
-- [ ] Qdrant、Redis、ES、MinIO 客户端封装
-- [ ] 基础健康检查 + Prometheus metrics 端点
-- [ ] 结构化日志(structlog)集成
+- [x] 项目骨架(uv 项目、目录结构、配置管理)
+- [x] Docker Compose 编排所有基础服务
+- [x] PostgreSQL Schema + Alembic 迁移
+- [x] Qdrant、Redis、MinIO 客户端封装
+- [x] 基础健康检查 + Prometheus metrics 端点
+- [x] 结构化日志(structlog)集成
 
 ### Phase 2: 鉴权与多租户 (Week 2)
-- [ ] 用户/租户/API Key 数据模型
-- [ ] JWT 用户登录(管理后台用)
-- [ ] API Key 鉴权中间件
-- [ ] 租户上下文注入中间件
-- [ ] 限流中间件(Redis 滑动窗口)
-- [ ] 用量统计基础
+- [x] 用户/租户/API Key 数据模型
+- [x] JWT 用户登录(管理后台用)
+- [x] API Key 鉴权中间件
+- [x] 租户上下文注入中间件
+- [x] 限流中间件(Redis 滑动窗口)
+- [x] 用量统计基础
 
 ### Phase 3: 数据接入 Pipeline (Week 3-4)
 - [ ] 知识库 CRUD API
@@ -631,8 +631,8 @@ CREATE TABLE usage_daily (
 - [ ] 失败重试 + 状态追踪 + 进度查询
 
 ### Phase 4: 检索引擎 (Week 5)
-- [ ] 向量检索(Qdrant 多 Collection 并行)
-- [ ] BM25 检索(ES)
+- [ ] Qdrant dense vector 检索(多 Collection 并行)
+- [ ] Qdrant sparse keyword 检索
 - [ ] RRF 融合
 - [ ] Rerank 服务
 - [ ] 缓存层

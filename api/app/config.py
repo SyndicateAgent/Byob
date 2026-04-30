@@ -21,7 +21,6 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://localhost:6379/0"
     qdrant_url: AnyUrl = AnyUrl("http://localhost:6333")
-    elasticsearch_url: AnyUrl = AnyUrl("http://localhost:9200")
 
     minio_endpoint_url: AnyUrl = AnyUrl("http://localhost:9000")
     minio_access_key: str = "minioadmin"
@@ -33,6 +32,11 @@ class Settings(BaseSettings):
     dependency_health_timeout_seconds: float = 2.0
     database_pool_size: int = 5
     database_max_overflow: int = 10
+
+    jwt_secret_key: SecretStr = SecretStr("change-me-in-production-with-at-least-32-bytes")
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60
+    default_api_key_rate_limit: int = 100
 
 
 @lru_cache(maxsize=1)

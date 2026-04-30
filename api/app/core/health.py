@@ -7,7 +7,6 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from api.app.core.es_client import ElasticsearchClient
 from api.app.core.minio_client import MinioClient
 from api.app.core.qdrant_client import QdrantStoreClient
 from api.app.core.redis_client import RedisClient
@@ -22,7 +21,6 @@ class DependencyState(Protocol):
     db_engine: AsyncEngine
     redis_client: RedisClient
     qdrant_client: QdrantStoreClient
-    elasticsearch_client: ElasticsearchClient
     minio_client: MinioClient
 
 
@@ -69,14 +67,12 @@ async def collect_dependency_checks(app_state: DependencyState) -> list[HealthCh
     db_engine: AsyncEngine = app_state.db_engine
     redis_client: RedisClient = app_state.redis_client
     qdrant_client: QdrantStoreClient = app_state.qdrant_client
-    elasticsearch_client: ElasticsearchClient = app_state.elasticsearch_client
     minio_client: MinioClient = app_state.minio_client
 
     checks = await gather(
         probe_dependency("postgres", lambda: check_postgres(db_engine)),
         probe_dependency("redis", redis_client.ping),
         probe_dependency("qdrant", qdrant_client.ping),
-        probe_dependency("elasticsearch", elasticsearch_client.ping),
         probe_dependency("minio", minio_client.ping),
     )
     return list(checks)

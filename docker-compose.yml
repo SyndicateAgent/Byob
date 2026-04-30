@@ -56,29 +56,6 @@ services:
       retries: 5
       start_period: 10s
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.3
-    container_name: kb-platform-elasticsearch
-    restart: unless-stopped
-    environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
-    ports:
-      - "${ELASTICSEARCH_PORT:-9200}:9200"
-    volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1",
-        ]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
   minio:
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: kb-platform-minio
@@ -103,5 +80,4 @@ volumes:
   postgres_data:
   redis_data:
   qdrant_data:
-  elasticsearch_data:
   minio_data:

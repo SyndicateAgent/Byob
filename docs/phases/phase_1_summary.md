@@ -3,10 +3,10 @@
 ## Completed
 
 - Created the uv-managed FastAPI project skeleton with Pydantic v2 settings.
-- Added Docker Compose services for PostgreSQL 16, Redis 7, Qdrant, Elasticsearch 8, and MinIO.
+- Added Docker Compose services for PostgreSQL 16, Redis 7, Qdrant, and MinIO.
 - Added SQLAlchemy 2.0 async database setup and ORM models for the initial PostgreSQL schema.
 - Added Alembic async migration environment and the initial schema migration.
-- Added async wrappers for Redis, Qdrant, Elasticsearch, and MinIO health checks.
+- Added async wrappers for Redis, Qdrant, and MinIO health checks.
 - Added `/healthz` and `/metrics` endpoints with request ID propagation and Prometheus metrics.
 - Integrated structlog JSON logging configuration.
 - Added basic tests for health contracts and initial model metadata.

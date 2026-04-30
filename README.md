@@ -22,7 +22,6 @@ Infrastructure services started by Docker Compose:
 - PostgreSQL 16 on `localhost:5432`
 - Redis 7 on `localhost:6379`
 - Qdrant on `localhost:6333` and `localhost:6334`
-- Elasticsearch 8 on `localhost:9200`
 - MinIO on `localhost:9000`, console on `localhost:9001`
 
 Quality checks:
