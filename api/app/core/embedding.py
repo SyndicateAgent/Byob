@@ -8,7 +8,7 @@ class EmbeddingClient:
 
     def __init__(self, settings: Settings) -> None:
         self._endpoint_url = str(settings.embedding_endpoint_url).rstrip("/")
-        self._model = settings.embedding_model
+        self.model = settings.embedding_model
         self._client = httpx.AsyncClient(timeout=30.0, trust_env=False)
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -16,7 +16,7 @@ class EmbeddingClient:
 
         response = await self._client.post(
             f"{self._endpoint_url}/embeddings",
-            json={"model": self._model, "input": texts},
+            json={"model": self.model, "input": texts},
         )
         response.raise_for_status()
         payload = response.json()

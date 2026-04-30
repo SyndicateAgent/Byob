@@ -640,14 +640,14 @@ CREATE TABLE usage_daily (
 - [x] 完整的 retrieval_logs 写入
 
 ### Phase 5: 高级检索能力 (Week 6)
-- [ ] Query 改写
-- [ ] HyDE
-- [ ] 子查询分解
-- [ ] 高级检索 API(`/retrieval/search/advanced`)
-- [ ] 独立 rerank API
-- [ ] 独立 embedding API
-- [ ] 多 query 批量检索 API
-- [ ] 反馈接口
+- [x] Query 改写
+- [x] HyDE
+- [x] 子查询分解
+- [x] 高级检索 API(`/retrieval/search/advanced`)
+- [x] 独立 rerank API
+- [x] 独立 embedding API
+- [x] 多 query 批量检索 API
+- [x] 反馈接口
 
 ### Phase 6: 管理后台 (Week 7)
 - [ ] Next.js + shadcn/ui 项目搭建

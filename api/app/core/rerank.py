@@ -15,8 +15,10 @@ class RerankClient:
     async def rerank(self, query: str, documents: list[str]) -> list[float] | None:
         """Return rerank scores when configured, otherwise no-op."""
 
-        if not self._enabled or not documents:
+        if not documents:
             return None
+        if not self._enabled:
+            return [0.0 for _ in documents]
 
         response = await self._client.post(
             f"{self._endpoint_url}/rerank",

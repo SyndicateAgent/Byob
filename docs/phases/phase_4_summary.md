@@ -22,7 +22,7 @@
 - Cache hits return the current request ID and still create an audit log row.
 - The sparse keyword vector is deterministic and simple; future quality work can replace it without changing the API contract.
 
-## Next Phase
+## Follow-Up Completed In Phase 5
 
 - Add advanced retrieval endpoints for query rewrite, HyDE, and decomposition.
 - Add standalone rerank and embedding APIs.

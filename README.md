@@ -34,6 +34,11 @@ Phase 3 management endpoints:
 Retrieval endpoint:
 
 - `POST /api/v1/retrieval/search`
+- `POST /api/v1/retrieval/search/advanced`
+- `POST /api/v1/retrieval/multi-search`
+- `POST /api/v1/retrieval/rerank`
+- `POST /api/v1/retrieval/embed`
+- `POST /api/v1/retrieval/{request_id}/feedback`
 
 Infrastructure services started by Docker Compose:
 
