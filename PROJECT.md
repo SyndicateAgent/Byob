@@ -650,12 +650,12 @@ CREATE TABLE usage_daily (
 - [x] 反馈接口
 
 ### Phase 6: 管理后台 (Week 7)
-- [ ] Next.js + shadcn/ui 项目搭建
-- [ ] 知识库管理界面
-- [ ] 文档管理界面(上传、列表、删除、重新处理)
-- [ ] API Key 管理界面
-- [ ] 用量统计面板
-- [ ] 检索测试控制台(类似 Pinecone 的 console)
+- [x] Next.js + shadcn/ui 项目搭建
+- [x] 知识库管理界面
+- [x] 文档管理界面(上传、列表、删除、重新处理)
+- [x] API Key 管理界面
+- [x] 用量统计面板
+- [x] 检索测试控制台(类似 Pinecone 的 console)
 
 ### Phase 7: SDK 与 MCP (Week 8)
 - [ ] Python SDK(异步优先,完整类型注解)

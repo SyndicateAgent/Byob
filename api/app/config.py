@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     api_v1_prefix: str = "/api/v1"
     log_level: str = "INFO"
+    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     database_url: str = Field(
         default="postgresql+asyncpg://byob:byob@localhost:5432/byob"
@@ -46,6 +47,16 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
     default_api_key_rate_limit: int = 100
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Return configured CORS origins as a normalized list."""
+
+        return [
+            origin.strip()
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache(maxsize=1)

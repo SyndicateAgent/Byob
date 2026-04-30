@@ -19,7 +19,7 @@
 - Feedback requires a UUID `request_id` present in `retrieval_logs`; non-UUID request headers are mapped to generated UUIDs during log writes.
 - Standalone rerank returns deterministic zero scores when `RERANK_ENABLED=false`; enable the rerank service for real scoring.
 
-## Next Phase
+## Follow-Up Completed In Phase 6
 
-- Build the management console UI for knowledge bases, documents, API keys, usage, and retrieval testing.
-- Surface advanced retrieval controls in the retrieval test console.
+- Built the management console UI for knowledge bases, documents, API keys, usage, and retrieval testing.
+- Surfaced advanced retrieval in the retrieval test console.

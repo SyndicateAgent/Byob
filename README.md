@@ -12,11 +12,32 @@ uv run alembic upgrade head
 uv run uvicorn api.app.main:app --reload
 ```
 
+Create the first management admin after migrations. If this reports missing tables, run `uv run alembic upgrade head` against the same `DATABASE_URL` first:
+
+```powershell
+$env:BYOB_ADMIN_EMAIL = "admin@example.com"
+$env:BYOB_ADMIN_PASSWORD = "replace-with-a-strong-password"
+uv run python -m api.scripts.seed_admin
+```
+
+If `BYOB_ADMIN_PASSWORD` is omitted, the script generates a strong password and prints it once. Existing users are not overwritten unless `BYOB_ADMIN_RESET_PASSWORD=true` is set.
+
 Run the ingestion worker in a separate terminal when processing documents:
 
 ```powershell
 uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO
 ```
+
+Run the management console in a separate terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+The console uses `NEXT_PUBLIC_API_BASE_URL` and defaults to `http://localhost:8000`.
+The API allows browser requests from `CORS_ALLOWED_ORIGINS`, which defaults to local Next.js development origins.
 
 Health and metrics endpoints:
 
@@ -53,4 +74,7 @@ Quality checks:
 uv run ruff check .
 uv run mypy api
 uv run pytest
+cd frontend
+npm run typecheck
+npm run build
 ```
