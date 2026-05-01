@@ -8,6 +8,7 @@ from api.app.mcp_server import (
     MCP_SERVER_NAME,
     bounded_limit,
     parse_uuid,
+    serialize_asset,
     serialize_chunk,
     serialize_document,
     serialize_knowledge_base,
@@ -27,6 +28,7 @@ def test_mcp_serializers_return_json_friendly_values() -> None:
     kb_id = uuid4()
     document_id = uuid4()
     chunk_id = uuid4()
+    asset_id = uuid4()
 
     knowledge_base = SimpleNamespace(
         id=kb_id,
@@ -69,10 +71,24 @@ def test_mcp_serializers_return_json_friendly_values() -> None:
         metadata_={"section": "intro"},
         created_at=now,
     )
+    asset = SimpleNamespace(
+        id=asset_id,
+        document_id=document_id,
+        kb_id=kb_id,
+        asset_index=0,
+        asset_type="image",
+        source_path="images/plot.png",
+        content_type="image/png",
+        file_size=456,
+        file_hash="ghi",
+        metadata_={"alt": "plot"},
+        created_at=now,
+    )
 
     assert serialize_knowledge_base(knowledge_base)["id"] == str(kb_id)
     assert serialize_document(document)["metadata"] == {"topic": "manual"}
     assert serialize_chunk(chunk)["content"] == "source text"
+    assert serialize_asset(asset)["url"] == f"/api/v1/documents/{document_id}/assets/{asset_id}"
 
 
 def test_mcp_input_helpers_validate_bounds_and_uuids() -> None:

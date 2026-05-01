@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     agent_llm_model: str = "qwen2.5:7b-instruct"
     agent_llm_timeout_seconds: float = 60.0
     agent_max_context_chars: int = 12000
+    agent_max_image_assets: int = 3
+    agent_max_image_bytes: int = 2_000_000
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
 

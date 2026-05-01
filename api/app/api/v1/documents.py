@@ -458,14 +458,26 @@ async def delete_document_endpoint(
 @router.post("/documents/{document_id}/reprocess", response_model=DocumentResponse)
 async def reprocess_document_endpoint(
     document_id: UUID,
+    request: Request,
     current_user: CurrentUserDep,
     session: DbSession,
 ) -> DocumentResponse:
-    """Reset a document and enqueue ingestion again."""
+    """Delete old vectors, reset a document, and enqueue ingestion again."""
 
     document = await get_document(session, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    knowledge_base = await get_knowledge_base(session, document.kb_id)
+    if knowledge_base is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    point_ids = await list_document_qdrant_point_ids(session, document)
+    await request.app.state.qdrant_client.delete_points(
+        knowledge_base.qdrant_collection,
+        point_ids,
+    )
     reset_document = await reset_document_for_reprocess(session, document)
     enqueue_document(reset_document.id)
     return DocumentResponse.model_validate(reset_document)

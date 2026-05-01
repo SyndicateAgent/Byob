@@ -22,6 +22,7 @@ from api.app.models.document import Document
 from api.app.models.document_asset import DocumentAsset
 from api.app.models.knowledge_base import KnowledgeBase
 from api.app.services.document_service import (
+    list_document_qdrant_point_ids,
     metadata_with_ingestion_progress,
     refresh_knowledge_base_counts,
 )
@@ -139,6 +140,14 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             progress=82,
             detail="Persisting chunks",
         )
+
+        async with session_factory() as session:
+            document_result = await session.execute(
+                select(Document).where(Document.id == document.id)
+            )
+            current_document = document_result.scalar_one()
+            existing_point_ids = await list_document_qdrant_point_ids(session, current_document)
+        await qdrant_client.delete_points(knowledge_base.qdrant_collection, existing_point_ids)
 
         async with session_factory() as session:
             await session.execute(delete(Chunk).where(Chunk.document_id == document.id))

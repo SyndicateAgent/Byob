@@ -6,7 +6,12 @@ from api.app.api.v1.retrieval import build_cache_key
 from api.app.config import Settings
 from api.app.main import create_app
 from api.app.schemas.retrieval import RetrievalRequest
-from api.app.services.retrieval_service import Candidate, build_qdrant_filter, rrf_fuse
+from api.app.services.retrieval_service import (
+    Candidate,
+    build_qdrant_filter,
+    referenced_asset_keys,
+    rrf_fuse,
+)
 
 
 def test_phase_four_search_route_is_mounted() -> None:
@@ -54,3 +59,16 @@ def test_retrieval_cache_key_is_payload_scoped() -> None:
 
     assert build_cache_key(payload) == build_cache_key(payload)
     assert build_cache_key(payload) != build_cache_key(changed)
+
+
+def test_referenced_asset_keys_parse_byob_asset_urls_once() -> None:
+    """Retrieval can expose assets referenced by Markdown or HTML chunk content."""
+
+    document_id = uuid4()
+    asset_id = uuid4()
+    content = (
+        f"![plot](/api/v1/documents/{document_id}/assets/{asset_id})\n"
+        f'<img src="/api/v1/documents/{document_id}/assets/{asset_id}">'
+    )
+
+    assert referenced_asset_keys(content) == [(document_id, asset_id)]

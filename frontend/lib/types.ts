@@ -78,6 +78,19 @@ export interface RetrievalResult {
     name: string;
     metadata: Record<string, unknown>;
   };
+  assets: RetrievalAssetRef[];
+}
+
+export interface RetrievalAssetRef {
+  id: string;
+  document_id: string;
+  kb_id: string;
+  asset_type: string;
+  source_path: string;
+  url: string;
+  content_type: string;
+  file_size: number;
+  metadata: Record<string, unknown>;
 }
 
 export interface AgentSource {
@@ -95,6 +108,7 @@ export interface AgentSource {
   chunk_type: string;
   page_num: number | null;
   metadata: Record<string, unknown>;
+  assets: RetrievalAssetRef[];
 }
 
 export interface AgentAskResponse {

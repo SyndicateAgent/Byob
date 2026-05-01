@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from datetime import timedelta
 from time import perf_counter
 from typing import Any
@@ -16,10 +17,22 @@ from api.app.schemas.agent import (
     AgentSource,
     AgentStats,
 )
-from api.app.schemas.retrieval import RetrievalResponse, RetrievalResult
+from api.app.schemas.retrieval import RetrievalAssetRef, RetrievalResponse, RetrievalResult
 
 JsonDict = dict[str, Any]
 MCP_AGENT_TOOL = "advanced_search_knowledge_base"
+MCP_ASSET_TOOL = "get_document_asset"
+
+
+@dataclass(frozen=True)
+class AgentImageInput:
+    """Image bytes prepared for an OpenAI-compatible multimodal chat request."""
+
+    source_id: str
+    asset_id: str
+    url: str
+    content_type: str
+    data_uri: str
 
 
 class AgentServiceError(RuntimeError):
@@ -49,9 +62,25 @@ async def answer_with_mcp_agent(
         for index, result in enumerate(retrieval_response.results, 1)
     ]
 
+    image_inputs: list[AgentImageInput] = []
+    asset_warnings: list[str] = []
+    if payload.use_llm and settings.agent_llm_endpoint_url is not None:
+        try:
+            image_inputs = await fetch_mcp_image_inputs(settings, sources)
+        except Exception as exc:
+            asset_warnings.append(
+                f"MCP image asset loading failed; generated from text context only. Detail: {exc}"
+            )
+
     generation_started_at = perf_counter()
-    answer, model, warnings = await generate_agent_answer(settings, payload, sources)
+    answer, model, warnings = await generate_agent_answer(
+        settings,
+        payload,
+        sources,
+        image_inputs,
+    )
     generation_latency_ms = elapsed_ms(generation_started_at)
+    answer = append_source_asset_section(answer, sources)
 
     return AgentAskResponse(
         request_id=request_id,
@@ -65,7 +94,7 @@ async def answer_with_mcp_agent(
             generation_latency_ms=generation_latency_ms,
             mcp_session_id=mcp_session_id,
         ),
-        warnings=warnings,
+        warnings=[*asset_warnings, *warnings],
     )
 
 
@@ -166,13 +195,86 @@ def source_from_result(index: int, result: RetrievalResult) -> AgentSource:
         chunk_type=result.chunk_type,
         page_num=result.page_num,
         metadata=result.metadata,
+        assets=result.assets,
     )
+
+
+async def fetch_mcp_image_inputs(
+    settings: Settings,
+    sources: list[AgentSource],
+) -> list[AgentImageInput]:
+    """Load selected image assets through MCP for multimodal LLM input."""
+
+    selected = select_image_assets_for_llm(sources, settings.agent_max_image_assets)
+    if not selected:
+        return []
+
+    image_inputs: list[AgentImageInput] = []
+    async with streamablehttp_client(
+        str(settings.mcp_server_url),
+        timeout=settings.mcp_client_timeout_seconds,
+        sse_read_timeout=settings.mcp_client_timeout_seconds,
+    ) as (read_stream, write_stream, _get_session_id):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            for source, asset in selected:
+                result = await session.call_tool(
+                    MCP_ASSET_TOOL,
+                    arguments={
+                        "document_id": str(asset.document_id),
+                        "asset_id": str(asset.id),
+                        "max_bytes": settings.agent_max_image_bytes,
+                    },
+                    read_timeout_seconds=timedelta(seconds=settings.mcp_client_timeout_seconds),
+                )
+                payload = extract_tool_payload(result)
+                data_uri = payload.get("data_uri")
+                content_type = payload.get("content_type")
+                if not isinstance(data_uri, str) or not data_uri:
+                    continue
+                if not isinstance(content_type, str) or not content_type.startswith("image/"):
+                    continue
+                image_inputs.append(
+                    AgentImageInput(
+                        source_id=source.source_id,
+                        asset_id=str(asset.id),
+                        url=asset.url,
+                        content_type=content_type,
+                        data_uri=data_uri,
+                    )
+                )
+
+    return image_inputs
+
+
+def select_image_assets_for_llm(
+    sources: list[AgentSource],
+    max_assets: int,
+) -> list[tuple[AgentSource, RetrievalAssetRef]]:
+    """Return unique image assets in source order for multimodal model input."""
+
+    if max_assets <= 0:
+        return []
+
+    selected: list[tuple[AgentSource, RetrievalAssetRef]] = []
+    seen: set[str] = set()
+    for source in sources:
+        for asset in source.assets:
+            asset_key = str(asset.id)
+            if asset_key in seen or not is_image_content_type(asset.content_type):
+                continue
+            selected.append((source, asset))
+            seen.add(asset_key)
+            if len(selected) >= max_assets:
+                return selected
+    return selected
 
 
 async def generate_agent_answer(
     settings: Settings,
     payload: AgentAskRequest,
     sources: list[AgentSource],
+    image_inputs: list[AgentImageInput],
 ) -> tuple[str, str | None, list[str]]:
     """Generate a Markdown answer with an optional OpenAI-compatible chat model."""
 
@@ -198,7 +300,7 @@ async def generate_agent_answer(
         return no_source_answer(payload.question), settings.agent_llm_model, warnings
 
     try:
-        answer = await call_chat_completion(settings, payload, sources)
+        answer = await call_chat_completion(settings, payload, sources, image_inputs)
     except Exception as exc:
         warnings.append(f"LLM generation failed; returned an extractive MCP answer. Detail: {exc}")
         return build_extract_answer(payload, sources, warnings[0]), None, warnings
@@ -210,6 +312,7 @@ async def call_chat_completion(
     settings: Settings,
     payload: AgentAskRequest,
     sources: list[AgentSource],
+    image_inputs: list[AgentImageInput],
 ) -> str:
     """Call an OpenAI-compatible chat completions endpoint."""
 
@@ -227,14 +330,20 @@ async def call_chat_completion(
                     "You are BYOB's simple RAG QA Agent. Answer in the user's language. "
                     "Use only the provided MCP source chunks. Return Markdown. Preserve useful "
                     "LaTeX formulas, Markdown tables, HTML snippets, and Markdown image syntax "
-                    "from the sources when they help answer the question. Cite sources as [S1], "
-                    "[S2]. "
+                    "from the sources when they help answer the question. If image inputs are "
+                    "provided, inspect them and include the corresponding source asset Markdown "
+                    "URL when the image is relevant. Cite sources as [S1], [S2]. "
                     "If the sources are insufficient, say so clearly."
                 ),
             },
             {
                 "role": "user",
-                "content": build_llm_prompt(payload, sources, settings.agent_max_context_chars),
+                "content": build_user_message_content(
+                    payload,
+                    sources,
+                    image_inputs,
+                    settings.agent_max_context_chars,
+                ),
             },
         ],
     }
@@ -251,6 +360,32 @@ async def call_chat_completion(
     if not isinstance(content, str) or not content.strip():
         raise AgentServiceError("LLM returned an empty answer")
     return content.strip()
+
+
+def build_user_message_content(
+    payload: AgentAskRequest,
+    sources: list[AgentSource],
+    image_inputs: list[AgentImageInput],
+    max_chars: int,
+) -> str | list[dict[str, object]]:
+    """Return text or OpenAI-compatible multimodal user message content."""
+
+    prompt = build_llm_prompt(payload, sources, max_chars)
+    if not image_inputs:
+        return prompt
+
+    content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
+    for image in image_inputs:
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": image.data_uri,
+                    "detail": "auto",
+                },
+            }
+        )
+    return content
 
 
 def chat_completions_url(endpoint_url: str) -> str:
@@ -278,16 +413,35 @@ def build_source_context(sources: list[AgentSource], max_chars: int) -> str:
     blocks: list[str] = []
     for source in sources:
         heading = source_heading(source)
+        asset_context = source_asset_context(source)
         content = source.content.strip()
-        available_chars = remaining_chars - len(heading) - 16
+        available_chars = remaining_chars - len(heading) - len(asset_context) - 16
         if available_chars <= 0:
             break
         if len(content) > available_chars:
             content = f"{content[:available_chars].rstrip()}\n...[truncated]"
-        block = f"{heading}\n{content}"
+        block_parts = [heading]
+        if asset_context:
+            block_parts.append(asset_context)
+        block_parts.append(content)
+        block = "\n".join(block_parts)
         blocks.append(block)
         remaining_chars -= len(block)
     return "\n\n".join(blocks) if blocks else "No source chunks were retrieved."
+
+
+def source_asset_context(source: AgentSource) -> str:
+    """Describe source assets in the text prompt without embedding binary data."""
+
+    if not source.assets:
+        return ""
+    lines = ["Source assets:"]
+    for index, asset in enumerate(source.assets, 1):
+        lines.append(
+            f"- asset {index}: id={asset.id}, type={asset.content_type}, "
+            f"url={asset.url}, source_path={asset.source_path}"
+        )
+    return "\n".join(lines)
 
 
 def source_heading(source: AgentSource) -> str:
@@ -317,7 +471,7 @@ def build_extract_answer(payload: AgentAskRequest, sources: list[AgentSource], r
         f"chunk `{source.chunk_id}` - score `{source.score:.4f}`"
         for source in sources
     ]
-    return (
+    answer = (
         "## Answer\n\n"
         f"{reason}\n\n"
         "These are the highest-scoring MCP source chunks for checking RAG recall.\n\n"
@@ -325,6 +479,34 @@ def build_extract_answer(payload: AgentAskRequest, sources: list[AgentSource], r
         "## Sources\n\n"
         f"{chr(10).join(source_lines)}"
     )
+    return append_source_asset_section(answer, sources)
+
+
+def append_source_asset_section(answer: str, sources: list[AgentSource]) -> str:
+    """Append referenced images/files that the Agent can include in rendered answers."""
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for index, asset in enumerate(source.assets, 1):
+            if asset.url in seen or asset.url in answer:
+                continue
+            seen.add(asset.url)
+            label = f"{source.source_id} asset {index}"
+            if is_image_content_type(asset.content_type):
+                lines.append(f"![{label}]({asset.url})")
+            else:
+                lines.append(f"- [{label}]({asset.url})")
+
+    if not lines:
+        return answer
+    return f"{answer.rstrip()}\n\n## Source Assets\n\n{chr(10).join(lines)}"
+
+
+def is_image_content_type(content_type: str) -> bool:
+    """Return whether an asset content type can be sent as an image input."""
+
+    return content_type.lower().startswith("image/")
 
 
 def no_source_answer(question: str) -> str:

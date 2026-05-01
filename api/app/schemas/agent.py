@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.app.schemas.retrieval import RetrievalDocument
+from api.app.schemas.retrieval import RetrievalAssetRef, RetrievalDocument
 
 
 class AgentRetrievalOptions(BaseModel):
@@ -47,6 +47,7 @@ class AgentSource(BaseModel):
     chunk_type: str
     page_num: int | None
     metadata: dict[str, object]
+    assets: list[RetrievalAssetRef] = Field(default_factory=list)
 
 
 class AgentStats(BaseModel):

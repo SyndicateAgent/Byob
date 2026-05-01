@@ -1,3 +1,4 @@
+import base64
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -12,14 +13,25 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from api.app.config import Settings, get_settings
 from api.app.core.embedding import EmbeddingClient
+from api.app.core.minio_client import MinioClient
 from api.app.core.qdrant_client import QdrantStoreClient
 from api.app.core.rerank import RerankClient
 from api.app.db.session import create_engine, create_session_factory
 from api.app.models.chunk import Chunk
 from api.app.models.document import Document
+from api.app.models.document_asset import DocumentAsset
 from api.app.models.knowledge_base import KnowledgeBase
 from api.app.schemas.retrieval import RetrievalOptions, RetrievalRequest
-from api.app.services.document_service import get_document, list_chunks
+from api.app.services.document_service import (
+    get_document,
+    list_chunks,
+)
+from api.app.services.document_service import (
+    get_document_asset as load_document_asset,
+)
+from api.app.services.document_service import (
+    list_document_assets as list_assets_for_document,
+)
 from api.app.services.query_enhancer import enhance_query
 from api.app.services.retrieval_service import search
 
@@ -38,6 +50,7 @@ class ByobMcpContext:
     qdrant_client: QdrantStoreClient
     embedding_client: EmbeddingClient
     rerank_client: RerankClient
+    minio_client: MinioClient
 
 
 @asynccontextmanager
@@ -52,6 +65,11 @@ async def byob_mcp_lifespan(_server: FastMCP) -> AsyncIterator[ByobMcpContext]:
     )
     embedding_client = EmbeddingClient(settings)
     rerank_client = RerankClient(settings)
+    minio_client = MinioClient(
+        str(settings.minio_endpoint_url),
+        settings.dependency_health_timeout_seconds,
+        settings,
+    )
     try:
         yield ByobMcpContext(
             settings=settings,
@@ -60,11 +78,13 @@ async def byob_mcp_lifespan(_server: FastMCP) -> AsyncIterator[ByobMcpContext]:
             qdrant_client=qdrant_client,
             embedding_client=embedding_client,
             rerank_client=rerank_client,
+            minio_client=minio_client,
         )
     finally:
         await qdrant_client.close()
         await embedding_client.close()
         await rerank_client.close()
+        await minio_client.close()
         await engine.dispose()
 
 
@@ -72,8 +92,9 @@ mcp = FastMCP(
     MCP_SERVER_NAME,
     instructions=(
         "Use BYOB tools to discover local knowledge bases and retrieve source chunks for "
-        "AI Agent context. BYOB returns retrieved source text only; the Agent remains "
-        "responsible for reasoning, citation, and final answer generation."
+        "AI Agent context. Retrieval results include source text and any referenced "
+        "document assets. Use get_document_asset when image or file bytes are needed "
+        "for multimodal reasoning or direct answer attachments."
     ),
     lifespan=byob_mcp_lifespan,
 )
@@ -305,6 +326,68 @@ async def get_document_chunks(
     }
 
 
+@mcp.tool()
+async def list_document_assets(
+    document_id: str,
+    ctx: McpContext,
+) -> JsonDict:
+    """List images and other parsed binary assets extracted from a document."""
+
+    app_context = mcp_app_context(ctx)
+    async with app_context.session_factory() as session:
+        document = await get_document(session, parse_uuid(document_id, "document_id"))
+        if document is None:
+            raise ValueError("document was not found")
+        assets = await list_assets_for_document(session, document)
+
+    return {
+        "document": serialize_document(document),
+        "count": len(assets),
+        "assets": [serialize_asset(asset) for asset in assets],
+    }
+
+
+@mcp.tool()
+async def get_document_asset(
+    document_id: str,
+    asset_id: str,
+    ctx: McpContext,
+    max_bytes: int = 2_000_000,
+) -> JsonDict:
+    """Return one parsed asset as base64 so an Agent can inspect image/file bytes."""
+
+    safe_max_bytes = max(1, min(max_bytes, 10_000_000))
+    app_context = mcp_app_context(ctx)
+    async with app_context.session_factory() as session:
+        document = await get_document(session, parse_uuid(document_id, "document_id"))
+        if document is None:
+            raise ValueError("document was not found")
+        asset = await load_document_asset(session, document, parse_uuid(asset_id, "asset_id"))
+        if asset is None:
+            raise ValueError("document asset was not found")
+
+    if asset.file_size > safe_max_bytes:
+        raise ValueError(
+            f"asset is {asset.file_size} bytes, larger than max_bytes={safe_max_bytes}"
+        )
+
+    stored_object = await app_context.minio_client.get_stored_object(asset.minio_path)
+    content_type = asset.content_type or stored_object.content_type
+    encoded = base64.b64encode(stored_object.content).decode("ascii")
+    data_uri = (
+        f"data:{content_type};base64,{encoded}"
+        if content_type.startswith("image/")
+        else None
+    )
+    return {
+        "asset": serialize_asset(asset),
+        "content_type": content_type,
+        "encoding": "base64",
+        "data": encoded,
+        "data_uri": data_uri,
+    }
+
+
 def mcp_app_context(ctx: McpContext) -> ByobMcpContext:
     """Return the typed BYOB MCP lifespan context."""
 
@@ -432,6 +515,25 @@ def serialize_chunk(chunk: Chunk) -> JsonDict:
         "bbox": chunk.bbox,
         "metadata": chunk.metadata_,
         "created_at": chunk.created_at.isoformat(),
+    }
+
+
+def serialize_asset(asset: DocumentAsset) -> JsonDict:
+    """Serialize a parsed document asset for Agent-facing MCP output."""
+
+    return {
+        "id": str(asset.id),
+        "document_id": str(asset.document_id),
+        "kb_id": str(asset.kb_id),
+        "asset_index": asset.asset_index,
+        "asset_type": asset.asset_type,
+        "source_path": asset.source_path,
+        "url": f"/api/v1/documents/{asset.document_id}/assets/{asset.id}",
+        "content_type": asset.content_type,
+        "file_size": asset.file_size,
+        "file_hash": asset.file_hash,
+        "metadata": asset.metadata_,
+        "created_at": asset.created_at.isoformat(),
     }
 
 

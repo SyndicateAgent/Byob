@@ -259,6 +259,11 @@ npm run dev</code></pre>
                   <td>可选 OpenAI-compatible Chat Completions 地址</td>
                   <td>未启用</td>
                 </tr>
+                <tr>
+                  <td><code>AGENT_MAX_IMAGE_ASSETS</code></td>
+                  <td>QA Agent 每次最多传给多模态模型的图片数量</td>
+                  <td><code>3</code></td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -271,9 +276,10 @@ npm run dev</code></pre>
             <p class="section-kicker">MCP and RAG Test</p>
             <h2>MCP 与 QA Agent</h2>
             <p>
-              BYOB MCP Server 暴露知识库列表、文档列表、普通检索、高级检索、多检索和
-              chunk 获取工具。大多数 MCP 客户端使用 stdio transport，控制台 QA Agent 使用
-              Streamable HTTP transport。
+              BYOB MCP Server 暴露知识库列表、文档列表、普通检索、高级检索、多检索、
+              chunk 获取以及 document asset 获取工具。召回结果会带出 chunk 中引用的图片/
+              文件 manifest，控制台 QA Agent 可以把图片作为多模态输入交给 LLM。
+              大多数 MCP 客户端使用 stdio transport，控制台 QA Agent 使用 Streamable HTTP transport。
             </p>
             <pre><code>uv run python -m api.app.mcp_server
 
@@ -286,7 +292,8 @@ uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1
               <li>等待 Worker 完成解析、chunk 和 embedding。</li>
               <li>打开 <code>/agent</code> 页面输入问题。</li>
               <li>Agent 通过 MCP 调用高级检索工具。</li>
-              <li>有 LLM 时生成答案，无 LLM 时返回抽取式 Markdown。</li>
+              <li>如果命中图片 asset，Agent 通过 MCP 拉取图片给多模态模型查看。</li>
+              <li>有 LLM 时生成答案，无 LLM 时返回抽取式 Markdown，并保留图片/文件链接。</li>
             </ol>
           </div>
         </div>
@@ -327,6 +334,7 @@ uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1
                 <li><code>list_knowledge_bases</code></li>
                 <li><code>advanced_search_knowledge_base</code></li>
                 <li><code>get_document_chunks</code></li>
+                <li><code>get_document_asset</code></li>
               </ul>
             </article>
           </div>

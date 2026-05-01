@@ -36,6 +36,22 @@ class RetrievalDocument(BaseModel):
     metadata: dict[str, object]
 
 
+class RetrievalAssetRef(BaseModel):
+    """Binary asset referenced by a retrieved source chunk."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    document_id: UUID
+    kb_id: UUID
+    asset_type: str
+    source_path: str
+    url: str
+    content_type: str
+    file_size: int
+    metadata: dict[str, object]
+
+
 class ParentChunkContext(BaseModel):
     """Optional parent chunk context."""
 
@@ -60,6 +76,7 @@ class RetrievalResult(BaseModel):
     page_num: int | None
     bbox: dict[str, object] | None
     metadata: dict[str, object]
+    assets: list[RetrievalAssetRef] = Field(default_factory=list)
     parent_chunk: ParentChunkContext | None = None
 
 

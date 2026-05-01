@@ -1,14 +1,20 @@
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from fastapi import Request
+from pytest import MonkeyPatch
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.app.api.v1 import documents as documents_api
 from api.app.config import Settings
 from api.app.core.qdrant_client import QdrantStoreClient
 from api.app.main import create_app
 from api.app.models.chunk import Chunk
 from api.app.models.document import Document
 from api.app.models.knowledge_base import KnowledgeBase
+from api.app.schemas.auth import CurrentUser
 from api.app.services.document_service import (
     find_duplicate_document,
     metadata_with_ingestion_progress,
@@ -110,6 +116,117 @@ async def test_qdrant_delete_points_skips_empty_ids() -> None:
     client._client = FailingClient()
 
     await client.delete_points("kb_collection", [])
+
+
+async def test_reprocess_deletes_existing_qdrant_points_before_reset(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Reprocessing must delete old Qdrant points before chunk rows are cleared."""
+
+    now = datetime.now(UTC)
+    kb_id = uuid4()
+    document_id = uuid4()
+    old_point_id = uuid4()
+    document = Document(
+        id=document_id,
+        kb_id=kb_id,
+        name="paper.pdf",
+        file_type="pdf",
+        file_size=128,
+        minio_path="documents/paper.pdf",
+        file_hash="hash",
+        source_type="upload",
+        status="completed",
+        error_message=None,
+        metadata_={},
+        chunk_count=1,
+    )
+    document.created_at = now
+    document.updated_at = now
+    knowledge_base = KnowledgeBase(id=kb_id, name="KB", qdrant_collection="kb_collection")
+    calls: list[str] = []
+
+    class FakeQdrantClient:
+        def __init__(self) -> None:
+            self.deleted: list[tuple[str, list[str]]] = []
+
+        async def delete_points(self, collection_name: str, point_ids: list[str]) -> None:
+            calls.append("delete_points")
+            self.deleted.append((collection_name, point_ids))
+
+    qdrant_client = FakeQdrantClient()
+    request = cast(
+        Request,
+        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(qdrant_client=qdrant_client))),
+    )
+
+    async def fake_get_document(session: AsyncSession, lookup_id: UUID) -> Document | None:
+        calls.append("get_document")
+        assert lookup_id == document_id
+        return document
+
+    async def fake_get_knowledge_base(
+        session: AsyncSession,
+        lookup_id: UUID,
+    ) -> KnowledgeBase | None:
+        calls.append("get_knowledge_base")
+        assert lookup_id == kb_id
+        return knowledge_base
+
+    async def fake_list_document_qdrant_point_ids(
+        session: AsyncSession,
+        selected_document: Document,
+    ) -> list[str]:
+        calls.append("list_point_ids")
+        assert selected_document is document
+        return [str(old_point_id)]
+
+    async def fake_reset_document_for_reprocess(
+        session: AsyncSession,
+        selected_document: Document,
+    ) -> Document:
+        calls.append("reset")
+        assert selected_document is document
+        assert qdrant_client.deleted == [("kb_collection", [str(old_point_id)])]
+        document.status = "pending"
+        document.chunk_count = 0
+        return document
+
+    def fake_enqueue_document(queued_document_id: UUID) -> None:
+        calls.append("enqueue")
+        assert queued_document_id == document_id
+
+    monkeypatch.setattr(documents_api, "get_document", fake_get_document)
+    monkeypatch.setattr(documents_api, "get_knowledge_base", fake_get_knowledge_base)
+    monkeypatch.setattr(
+        documents_api,
+        "list_document_qdrant_point_ids",
+        fake_list_document_qdrant_point_ids,
+    )
+    monkeypatch.setattr(
+        documents_api,
+        "reset_document_for_reprocess",
+        fake_reset_document_for_reprocess,
+    )
+    monkeypatch.setattr(documents_api, "enqueue_document", fake_enqueue_document)
+
+    response = await documents_api.reprocess_document_endpoint(
+        document_id,
+        request,
+        current_user=CurrentUser(id=uuid4(), email="admin@example.com", role="admin"),
+        session=cast(AsyncSession, object()),
+    )
+
+    assert calls == [
+        "get_document",
+        "get_knowledge_base",
+        "list_point_ids",
+        "delete_points",
+        "reset",
+        "enqueue",
+    ]
+    assert response.id == document_id
+    assert response.status == "pending"
 
 
 def test_asset_references_are_rewritten_in_markdown_and_html() -> None:

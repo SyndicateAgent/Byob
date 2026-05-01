@@ -266,7 +266,11 @@ AGENT_LLM_API_KEY=
 AGENT_LLM_MODEL=qwen2.5:7b-instruct
 AGENT_LLM_TIMEOUT_SECONDS=60
 AGENT_MAX_CONTEXT_CHARS=12000
+AGENT_MAX_IMAGE_ASSETS=3
+AGENT_MAX_IMAGE_BYTES=2000000
 ```
+
+如果召回 chunk 中包含由 BYOB 解析出的图片，检索结果会带 `assets` manifest。控制台 QA Agent 会通过 MCP 拉取这些图片，并按 OpenAI-compatible `image_url` 格式交给支持多模态的模型；最终 Markdown 回答也会保留或补充相关图片/文件链接。
 
 ### 常用 API 和 MCP 工具
 
@@ -317,6 +321,8 @@ MCP 工具：
 - `advanced_search_knowledge_base`
 - `multi_search_knowledge_base`
 - `get_document_chunks`
+- `list_document_assets`
+- `get_document_asset`
 
 ### 生产部署建议
 
@@ -626,7 +632,11 @@ AGENT_LLM_API_KEY=
 AGENT_LLM_MODEL=qwen2.5:7b-instruct
 AGENT_LLM_TIMEOUT_SECONDS=60
 AGENT_MAX_CONTEXT_CHARS=12000
+AGENT_MAX_IMAGE_ASSETS=3
+AGENT_MAX_IMAGE_BYTES=2000000
 ```
+
+When retrieved chunks reference extracted images, retrieval results include an `assets` manifest. The console QA Agent loads those images through MCP and sends them as OpenAI-compatible `image_url` inputs to multimodal-capable models; the final Markdown answer also preserves or appends relevant image/file links.
 
 ### Main APIs and MCP Tools
 
@@ -677,6 +687,8 @@ MCP tools:
 - `advanced_search_knowledge_base`
 - `multi_search_knowledge_base`
 - `get_document_chunks`
+- `list_document_assets`
+- `get_document_asset`
 
 ### Production Notes
 

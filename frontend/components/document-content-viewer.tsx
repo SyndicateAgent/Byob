@@ -145,6 +145,12 @@ function rewriteHtmlControlledAssets(html: string): string {
 
   const template = document.createElement("template");
   template.innerHTML = html;
+  for (const link of template.content.querySelectorAll("a")) {
+    const href = link.getAttribute("href") ?? "";
+    const controlledUrl = controlledAssetApiUrl(href);
+    if (!controlledUrl) continue;
+    link.setAttribute("href", appendAccessToken(controlledUrl));
+  }
   for (const image of template.content.querySelectorAll("img")) {
     const src = image.getAttribute("src") ?? "";
     const controlledUrl = controlledAssetApiUrl(src);
@@ -194,8 +200,10 @@ export function RenderedContent({
           components={{
             a: ({ href, children }) => {
               const isInternalAnchor = href?.startsWith("#");
+              const controlledAssetUrl = href ? controlledAssetApiUrl(href) : null;
+              const resolvedHref = controlledAssetUrl ? appendAccessToken(controlledAssetUrl) : href;
               return (
-                <a href={href} rel={isInternalAnchor ? undefined : "noreferrer"} target={isInternalAnchor ? undefined : "_blank"}>
+                <a href={resolvedHref} rel={isInternalAnchor ? undefined : "noreferrer"} target={isInternalAnchor ? undefined : "_blank"}>
                   {children}
                 </a>
               );
