@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field
@@ -56,6 +57,29 @@ class DocumentListResponse(BaseModel):
     data: list[DocumentResponse]
 
 
+class DocumentBatchUploadItem(BaseModel):
+    """Result for one file in a batch upload request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str
+    status: Literal["created", "skipped"]
+    reason: Literal["duplicate_name", "duplicate_file_hash", "empty_file"] | None = None
+    detail: str | None = None
+    document: DocumentResponse | None = None
+
+
+class DocumentBatchUploadResponse(BaseModel):
+    """Batch upload response with created and skipped file details."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    created_count: int
+    skipped_count: int
+    items: list[DocumentBatchUploadItem]
+
+
 class ChunkResponse(BaseModel):
     """Chunk metadata and source-of-truth content."""
 
@@ -83,3 +107,43 @@ class ChunkListResponse(BaseModel):
 
     request_id: str
     data: list[ChunkResponse]
+
+
+class DocumentContentResponse(BaseModel):
+    """Parsed full-content snapshot for document preview."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    document_id: UUID
+    content: str
+    content_type: str
+    source: str
+
+
+class DocumentAssetResponse(BaseModel):
+    """Metadata for a binary asset extracted from a document."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    id: UUID
+    document_id: UUID
+    kb_id: UUID
+    asset_index: int
+    asset_type: str
+    source_path: str
+    minio_path: str
+    content_type: str
+    file_size: int
+    file_hash: str
+    metadata: dict[str, object] = Field(alias="metadata_")
+    created_at: datetime
+
+
+class DocumentAssetListResponse(BaseModel):
+    """List response for parsed document assets."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    data: list[DocumentAssetResponse]

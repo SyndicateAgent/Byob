@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     embedding_endpoint_url: AnyUrl = AnyUrl("http://localhost:7997")
     embedding_model: str = "BAAI/bge-m3"
     embedding_dimension: int = 1024
+    pdf_parser: Literal["mineru", "pypdf"] = "mineru"
+    mineru_command: str = "mineru"
+    mineru_backend: str = "pipeline"
+    mineru_parse_method: Literal["auto", "txt", "ocr"] = "auto"
+    mineru_lang: str = "ch"
+    mineru_timeout_seconds: int = 900
+    mineru_api_url: str | None = None
+    mineru_formula_enable: bool = True
+    mineru_table_enable: bool = True
+    mineru_fallback_to_pypdf: bool = True
     rerank_endpoint_url: AnyUrl = AnyUrl("http://localhost:7998")
     rerank_model: str = "BAAI/bge-reranker-base"
     rerank_enabled: bool = True

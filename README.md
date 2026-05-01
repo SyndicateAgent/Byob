@@ -16,6 +16,14 @@ uv run uvicorn api.app.main:app --reload
 
 Docker Compose also starts Infinity-backed embedding and rerank services. The first startup downloads `BAAI/bge-m3` and `BAAI/bge-reranker-base` into Docker volumes, so it can take several minutes. Wait until `docker compose ps` shows both services as healthy before reprocessing documents.
 
+PDF ingestion prefers MinerU for layout-aware parsing, table/formula extraction, and OCR-friendly output. Install MinerU in the Python environment used by the worker before processing PDFs:
+
+```powershell
+uv pip install "mineru[core]"
+```
+
+The parser is controlled by `PDF_PARSER`, `MINERU_BACKEND`, `MINERU_PARSE_METHOD`, `MINERU_LANG`, and related settings in `.env`. If MinerU is unavailable and `MINERU_FALLBACK_TO_PYPDF=true`, BYOB falls back to `pypdf` so local development can continue.
+
 Create the first local management admin after migrations. If this reports missing tables, run `uv run alembic upgrade head` against the same `DATABASE_URL` first:
 
 ```powershell
@@ -33,6 +41,8 @@ uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=IN
 ```
 
 On Windows the worker defaults to Celery's `solo` pool because the process pool can fail with `billiard` handle errors.
+
+File import supports selecting multiple files at once. BYOB skips a file automatically when another document in the same knowledge base already has the same document name or SHA-256 file hash.
 
 Run the management console in a separate terminal:
 
@@ -63,6 +73,7 @@ Knowledge base and document endpoints:
 - `DELETE /api/v1/knowledge-bases/{kb_id}`
 - `GET /api/v1/knowledge-bases/{kb_id}/stats`
 - `POST /api/v1/knowledge-bases/{kb_id}/documents`
+- `POST /api/v1/knowledge-bases/{kb_id}/documents/batch`
 - `POST /api/v1/knowledge-bases/{kb_id}/documents/text`
 - `POST /api/v1/knowledge-bases/{kb_id}/documents/url`
 - `GET /api/v1/knowledge-bases/{kb_id}/documents`

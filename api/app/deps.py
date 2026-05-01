@@ -32,6 +32,33 @@ async def get_current_user(request: Request) -> CurrentUser:
         )
 
     token = authorization.removeprefix("Bearer ").strip()
+    return await get_current_user_from_token(request, token)
+
+
+async def get_current_user_or_query_token(request: Request) -> CurrentUser:
+    """Return the current user from a bearer token or asset access query token."""
+
+    authorization = request.headers.get("Authorization")
+    if authorization is not None and authorization.startswith("Bearer "):
+        return await get_current_user_from_token(
+            request,
+            authorization.removeprefix("Bearer ").strip(),
+        )
+
+    token = request.query_params.get("access_token")
+    if token:
+        return await get_current_user_from_token(request, token)
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing bearer token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def get_current_user_from_token(request: Request, token: str) -> CurrentUser:
+    """Resolve a management user from an access token string."""
+
     settings: Settings = request.app.state.settings
     try:
         payload = decode_access_token(settings, token)

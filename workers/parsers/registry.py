@@ -2,16 +2,21 @@ from re import sub
 
 from workers.parsers.base import ParsedDocument
 from workers.parsers.docx_parser import parse_docx
-from workers.parsers.pdf_parser import parse_pdf
+from workers.parsers.pdf_parser import PdfParserConfig, parse_pdf
 from workers.parsers.text_parser import parse_text
 
 
-def parse_document_bytes(content: bytes, file_type: str | None) -> ParsedDocument:
+def parse_document_bytes(
+    content: bytes,
+    file_type: str | None,
+    *,
+    pdf_config: PdfParserConfig | None = None,
+) -> ParsedDocument:
     """Dispatch document bytes to the parser for a supported file type."""
 
     normalized_type = (file_type or "txt").lower().lstrip(".")
     if normalized_type == "pdf":
-        return parse_pdf(content)
+        return parse_pdf(content, config=pdf_config)
     if normalized_type == "docx":
         return parse_docx(content)
     if normalized_type in {"txt", "md", "markdown", "html"}:

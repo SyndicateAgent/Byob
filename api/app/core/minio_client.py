@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urljoin
 
@@ -8,6 +9,14 @@ from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 from api.app.config import Settings
 
 BUCKET_EXISTS_ERROR_CODES = {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}
+
+
+@dataclass(frozen=True)
+class StoredObject:
+    """Object bytes and metadata loaded from MinIO."""
+
+    content: bytes
+    content_type: str
 
 
 def is_bucket_exists_error(exc: ClientError) -> bool:
@@ -59,6 +68,12 @@ class MinioClient:
     async def get_object(self, key: str) -> bytes:
         """Read an object from the configured MinIO bucket."""
 
+        stored_object = await self.get_stored_object(key)
+        return stored_object.content
+
+    async def get_stored_object(self, key: str) -> StoredObject:
+        """Read an object and its content type from the configured MinIO bucket."""
+
         async with self._session.client(
             "s3",
             endpoint_url=self._endpoint_url,
@@ -69,7 +84,10 @@ class MinioClient:
             response_body = cast(Any, response["Body"])
             async with response_body as stream:
                 content = await stream.read()
-                return cast(bytes, content)
+            return StoredObject(
+                content=cast(bytes, content),
+                content_type=str(response.get("ContentType") or "application/octet-stream"),
+            )
 
     async def close(self) -> None:
         """Close MinIO HTTP resources."""

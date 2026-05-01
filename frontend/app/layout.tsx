@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
+import { DialogProvider } from "@/components/ui/dialog-provider";
 
 export const metadata: Metadata = {
   title: "BYOB Console",
@@ -9,9 +11,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       <body>
-        <AppShell>{children}</AppShell>
+        <DialogProvider>
+          <AppShell>{children}</AppShell>
+        </DialogProvider>
       </body>
     </html>
   );

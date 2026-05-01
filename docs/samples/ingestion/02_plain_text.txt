@@ -1,0 +1,19 @@
+BYOB Plain Text Retrieval Sample
+
+This plain text file checks the simplest ingestion path. It has no Markdown syntax and should be parsed as UTF-8 text.
+
+Core facts:
+- BYOB is self-hosted.
+- BYOB manages vector database knowledge bases for AI Agents.
+- Source documents are parsed, chunked, embedded, and indexed.
+- Qdrant stores vectors and lightweight payloads.
+- PostgreSQL stores document and chunk source text.
+- MinIO stores uploaded sources and parsed assets.
+
+Chinese test paragraph:
+这个纯文本样例包含中文内容，用来测试没有空格的中文段落是否可以被切分和召回。用户可以询问：BYOB 会把上传源文件存在哪里？答案应该是 MinIO。
+
+Long paragraph for chunk overlap testing:
+When a document contains a long section, the chunker may split it into several chunks with overlap. The preview should use the parsed full-content snapshot when available instead of reconstructing source text from chunks. This prevents repeated overlap text from appearing in the rendered preview and avoids losing original paragraph boundaries.
+
+Suggested retrieval query: Where does BYOB store uploaded source files?

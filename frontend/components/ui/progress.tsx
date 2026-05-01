@@ -35,7 +35,7 @@ export function ProgressBar({
   const safeValue = Math.max(0, Math.min(100, Math.round(value)));
 
   return (
-    <div className={cn("space-y-2", className)} {...props}>
+    <div className={cn("space-y-2", className)} aria-busy={indeterminate || undefined} {...props}>
       {(label || detail || showValue) && (
         <div className="flex items-center justify-between gap-3 text-xs">
           <div className="min-w-0">
@@ -48,7 +48,7 @@ export function ProgressBar({
       <div className="h-2.5 overflow-hidden rounded-full border border-slate-200 bg-slate-100 shadow-inner">
         <div
           className={cn(
-            "relative h-full rounded-full bg-gradient-to-r transition-all duration-200 ease-out",
+            "relative h-full rounded-full bg-gradient-to-r",
             toneClasses[tone],
           )}
           style={{ width: `${safeValue}%` }}
@@ -59,15 +59,8 @@ export function ProgressBar({
               backgroundImage:
                 "linear-gradient(45deg, rgba(255,255,255,.55) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.55) 50%, rgba(255,255,255,.55) 75%, transparent 75%, transparent)",
               backgroundSize: "16px 16px",
-              animation: "progress-stripes 900ms linear infinite",
             }}
           />
-          {indeterminate && (
-            <span
-              className="absolute inset-y-0 w-1/2 bg-white/45 blur-sm"
-              style={{ animation: "sweep 1.2s ease-in-out infinite" }}
-            />
-          )}
         </div>
       </div>
     </div>

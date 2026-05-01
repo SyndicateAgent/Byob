@@ -132,6 +132,219 @@ body {
   animation: float-y 3.8s ease-in-out infinite;
 }
 
+.document-plain-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: #334155;
+}
+
+.document-rendered {
+  color: #334155;
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.document-rendered > *:first-child,
+.document-rendered-html > *:first-child {
+  margin-top: 0;
+}
+
+.document-rendered > *:last-child,
+.document-rendered-html > *:last-child {
+  margin-bottom: 0;
+}
+
+.document-rendered h1,
+.document-rendered h2,
+.document-rendered h3,
+.document-rendered h4,
+.document-rendered h5,
+.document-rendered h6 {
+  margin: 1.1em 0 0.45em;
+  color: #0f172a;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.document-rendered h1 {
+  font-size: 1.5rem;
+}
+
+.document-rendered h2 {
+  font-size: 1.25rem;
+}
+
+.document-rendered h3 {
+  font-size: 1.125rem;
+}
+
+.document-rendered p,
+.document-rendered ul,
+.document-rendered ol,
+.document-rendered blockquote,
+.document-rendered pre,
+.document-rendered table {
+  margin: 0.75em 0;
+}
+
+.document-rendered ul,
+.document-rendered ol {
+  padding-left: 1.35rem;
+}
+
+.document-rendered ul {
+  list-style: disc;
+}
+
+.document-rendered ol {
+  list-style: decimal;
+}
+
+.document-rendered a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.document-rendered blockquote {
+  border-left: 3px solid #bfdbfe;
+  background: #f8fafc;
+  padding: 0.55rem 0.85rem;
+  color: #475569;
+}
+
+.document-rendered code {
+  border-radius: 0.35rem;
+  background: #f1f5f9;
+  padding: 0.12rem 0.3rem;
+  color: #0f172a;
+  font-size: 0.88em;
+}
+
+.document-rendered pre {
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: #0f172a;
+  padding: 0.85rem;
+  color: #e2e8f0;
+}
+
+.document-rendered pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.document-rendered table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.document-rendered th,
+.document-rendered td {
+  border: 1px solid #e2e8f0;
+  padding: 0.55rem 0.7rem;
+  vertical-align: top;
+}
+
+.document-rendered th {
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.document-rendered img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
+
+.document-image-frame {
+  display: block;
+  margin: 1rem 0;
+}
+
+.document-image-frame img {
+  display: block;
+  max-height: min(60vh, 720px);
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.document-image-caption {
+  display: block;
+  margin-top: 0.4rem;
+  color: #64748b;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.document-image-placeholder {
+  display: flex;
+  min-height: 9rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+.document-rendered .katex {
+  color: #0f172a;
+  font-size: 1.02em;
+}
+
+.document-rendered .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 1rem 0;
+  padding: 0.25rem 0;
+}
+
+.document-rendered-compact {
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.document-rendered-compact p,
+.document-rendered-compact ul,
+.document-rendered-compact ol,
+.document-rendered-compact blockquote,
+.document-rendered-compact pre,
+.document-rendered-compact table,
+.document-rendered-compact .document-image-frame {
+  margin: 0.5rem 0;
+}
+
+.document-rendered-compact h1,
+.document-rendered-compact h2,
+.document-rendered-compact h3,
+.document-rendered-compact h4,
+.document-rendered-compact h5,
+.document-rendered-compact h6 {
+  margin: 0.6rem 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.document-rendered-compact .document-image-frame img {
+  max-height: 12rem;
+}
+
+.document-rendered-compact .document-image-placeholder {
+  min-height: 6rem;
+  font-size: 0.75rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

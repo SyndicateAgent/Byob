@@ -1,5 +1,10 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "byob_access_token";
+
+export function apiUrl(path: string) {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
 
 export function getToken() {
   if (typeof window === "undefined") return null;
@@ -113,7 +118,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     if (token) headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     headers,
   });

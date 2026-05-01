@@ -182,21 +182,23 @@ export default function RetrievalPage() {
               {response.stats.cache_hit && <Badge className="ml-2">cache hit</Badge>}
             </CardDescription>
           </CardHeader>
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             {response.results.map((result, index) => (
               <div
                 key={result.chunk_id}
-                className="animate-fade-up rounded-lg border border-slate-200 bg-white p-4 transition-all duration-300 hover:border-blue-200 hover:shadow-sm"
+                className="animate-fade-up min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 transition-all duration-300 hover:border-blue-200 hover:shadow-sm"
                 style={{ animationDelay: `${index * 55}ms` }}
               >
-                <div className="mb-2 flex justify-between gap-4 text-sm text-slate-500">
-                  <span>{result.document.name}</span>
-                  <div className="flex items-center gap-2">
+                <div className="mb-2 flex min-w-0 flex-col gap-2 text-sm text-slate-500 sm:flex-row sm:items-start sm:justify-between">
+                  <span className="min-w-0 break-words [overflow-wrap:anywhere]">{result.document.name}</span>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
                     {result.rerank_score !== null && <Badge variant="info">rerank {result.rerank_score.toFixed(4)}</Badge>}
                     <span>score {result.score.toFixed(4)}</span>
                   </div>
                 </div>
-                <p className="whitespace-pre-wrap text-sm leading-6">{result.content}</p>
+                <p className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-50/70 p-3 text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">
+                  {result.content}
+                </p>
               </div>
             ))}
           </div>

@@ -5,6 +5,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useDialog } from "@/components/ui/dialog-provider";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { PageHeader } from "@/components/ui/page-header";
@@ -15,6 +16,7 @@ import { formatDate } from "@/lib/utils";
 import type { UserItem } from "@/lib/types";
 
 export default function UsersPage() {
+  const { confirm } = useDialog();
   const [items, setItems] = useState<UserItem[]>([]);
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
@@ -84,7 +86,14 @@ export default function UsersPage() {
   }
 
   async function removeUser(user: UserItem) {
-    if (!window.confirm(`Delete user ${user.email}?`)) return;
+    const accepted = await confirm({
+      title: `Delete user ${user.email}?`,
+      description: "This account will no longer be able to access the management console.",
+      confirmLabel: "Delete user",
+      cancelLabel: "Keep",
+      variant: "destructive",
+    });
+    if (!accepted) return;
     try {
       await apiRequest(`/api/v1/users/${user.id}`, { method: "DELETE" });
       await load();

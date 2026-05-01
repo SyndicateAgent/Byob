@@ -14,6 +14,8 @@ class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
         Index("idx_documents_kb_status", "kb_id", "status"),
+        Index("idx_documents_kb_name", "kb_id", "name"),
+        Index("idx_documents_kb_file_hash", "kb_id", "file_hash"),
         Index("idx_documents_metadata", "metadata", postgresql_using="gin"),
     )
 

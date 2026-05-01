@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
+import { useDialog } from "@/components/ui/dialog-provider";
 import { Label } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { PageHeader } from "@/components/ui/page-header";
@@ -15,6 +16,7 @@ import { formatDate, formatNumber, statusVariant } from "@/lib/utils";
 import type { KnowledgeBase } from "@/lib/types";
 
 export default function KnowledgeBasesPage() {
+  const { confirm } = useDialog();
   const [items, setItems] = useState<KnowledgeBase[]>([]);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -49,7 +51,14 @@ export default function KnowledgeBasesPage() {
   }
 
   async function deleteKb(item: KnowledgeBase) {
-    if (!window.confirm(`Delete ${item.name} and all its documents?`)) return;
+    const accepted = await confirm({
+      title: `Delete ${item.name}?`,
+      description: "This removes the knowledge base and all documents linked to it.",
+      confirmLabel: "Delete knowledge base",
+      cancelLabel: "Keep",
+      variant: "destructive",
+    });
+    if (!accepted) return;
     try {
       await apiRequest(`/api/v1/knowledge-bases/${item.id}`, { method: "DELETE" });
       await load();

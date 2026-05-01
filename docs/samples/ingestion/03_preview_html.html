@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>BYOB HTML Ingestion Sample</title>
+  </head>
+  <body>
+    <main>
+      <h1>BYOB HTML Ingestion Sample</h1>
+      <p>
+        This HTML document checks sanitization, tag handling, table extraction, and source preview behavior.
+      </p>
+      <section>
+        <h2>Facts</h2>
+        <ul>
+          <li>BYOB is a self-hosted vector database management system.</li>
+          <li>AI Agents can retrieve context through local APIs.</li>
+          <li>Document ingestion uses parse, chunk, embed, and index stages.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Table</h2>
+        <table>
+          <thead>
+            <tr><th>Component</th><th>Role</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>PostgreSQL</td><td>Metadata and chunks</td></tr>
+            <tr><td>MinIO</td><td>Source files and parsed assets</td></tr>
+            <tr><td>Qdrant</td><td>Vector search</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>Inline Image</h2>
+        <img
+          alt="BYOB inline HTML sample image"
+          src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNDAiIGhlaWdodD0iOTAiIHZpZXdCb3g9IjAgMCAyNDAgOTAiPjxyZWN0IHdpZHRoPSIyNDAiIGhlaWdodD0iOTAiIHJ4PSIxMiIgZmlsbD0iI2VjZmRmNSIgc3Ryb2tlPSIjMDg5MWIyIi8+PHRleHQgeD0iMjAiIHk9IjUwIiBmb250LXNpemU9IjE4IiBmb250LWZhbWlseT0iQXJpYWwiIGZpbGw9IiMwZjE3MmEiPkhUTUwgc2FtcGxlIGltYWdlPC90ZXh0Pjwvc3ZnPg=="
+        />
+      </section>
+      <section>
+        <h2>Chinese</h2>
+        <p>这个 HTML 样例用于测试解析器对标签、表格和中文文本的处理。</p>
+      </section>
+    </main>
+    <script>console.log("This script should not be rendered in sanitized previews.");</script>
+  </body>
+</html>

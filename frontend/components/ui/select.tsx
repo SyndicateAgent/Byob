@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Check, ChevronDown } from "lucide-react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 interface ParsedOption {
@@ -38,18 +39,56 @@ function parseOptions(children: React.ReactNode): ParsedOption[] {
 export function Select({ className, children, value, defaultValue, onChange, disabled, name, id }: React.SelectHTMLAttributes<HTMLSelectElement>) {
   const rootRef = React.useRef<HTMLDivElement | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
   const options = React.useMemo(() => parseOptions(children), [children]);
   const [open, setOpen] = React.useState(false);
   const [internalValue, setInternalValue] = React.useState(String(defaultValue ?? options[0]?.value ?? ""));
+  const [portalReady, setPortalReady] = React.useState(false);
+  const [openDirection, setOpenDirection] = React.useState<"up" | "down">("down");
+  const [panelStyle, setPanelStyle] = React.useState<React.CSSProperties | null>(null);
+  const listboxId = React.useId();
 
   const selectedValue = value !== undefined ? String(value) : internalValue;
   const selectedOption = options.find((option) => option.value === selectedValue) ?? options[0];
 
+  const updatePanelPosition = React.useCallback(() => {
+    if (!triggerRef.current || typeof window === "undefined") return;
+
+    const rect = triggerRef.current.getBoundingClientRect();
+    const gap = 8;
+    const viewportPadding = 16;
+    const spaceBelow = window.innerHeight - rect.bottom - gap - viewportPadding;
+    const spaceAbove = rect.top - gap - viewportPadding;
+    const shouldOpenUp = spaceBelow < 220 && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(140, Math.min(320, shouldOpenUp ? spaceAbove : spaceBelow));
+    const width = Math.max(rect.width, 180);
+    const left = Math.min(
+      Math.max(viewportPadding, rect.left),
+      Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
+    );
+
+    setOpenDirection(shouldOpenUp ? "up" : "down");
+    setPanelStyle({
+      left,
+      top: shouldOpenUp ? rect.top - gap : rect.bottom + gap,
+      width,
+      maxHeight,
+      transform: shouldOpenUp ? "translateY(-100%)" : undefined,
+    });
+  }, []);
+
+  React.useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
   React.useEffect(() => {
     if (!open) return;
 
+    updatePanelPosition();
+
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) {
         setOpen(false);
       }
     };
@@ -61,13 +100,19 @@ export function Select({ className, children, value, defaultValue, onChange, dis
       }
     };
 
+    const onWindowChange = () => updatePanelPosition();
+
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onWindowChange);
+    window.addEventListener("scroll", onWindowChange, true);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onWindowChange);
+      window.removeEventListener("scroll", onWindowChange, true);
     };
-  }, [open]);
+  }, [open, updatePanelPosition]);
 
   function commitValue(nextValue: string) {
     if (value === undefined) {
@@ -104,8 +149,10 @@ export function Select({ className, children, value, defaultValue, onChange, dis
         id={id}
         type="button"
         disabled={disabled}
+        data-open={open ? "true" : "false"}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
         className={cn(
           "group flex h-10 w-full items-center justify-between gap-3 rounded-md border border-slate-300 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.98)_100%)] px-3 text-left text-sm text-slate-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] outline-none transition-all duration-200 hover:border-slate-400 hover:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400",
           className,
@@ -141,45 +188,57 @@ export function Select({ className, children, value, defaultValue, onChange, dis
           <ChevronDown className={cn("h-4 w-4 text-slate-400 transition-all duration-200 group-hover:text-slate-500 group-focus:text-blue-600", open && "rotate-180 text-blue-600")} />
         </span>
       </button>
-      {open && options.length > 0 && (
-        <div className="animate-soft-pop absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_24px_60px_rgba(15,23,42,0.16)] backdrop-blur">
-          <div className="border-b border-slate-100 bg-[linear-gradient(180deg,rgba(248,250,252,0.92)_0%,rgba(255,255,255,0.96)_100%)] px-3 py-2 text-[11px] font-medium uppercase text-slate-500">
-            Select an option
-          </div>
-          <div className="max-h-64 overflow-y-auto p-2" role="listbox" aria-labelledby={id}>
-            {options.map((option) => {
-              const active = option.value === selectedValue;
+      {portalReady &&
+        open &&
+        options.length > 0 &&
+        panelStyle &&
+        createPortal(
+          <div
+            ref={panelRef}
+            className={cn(
+              "animate-soft-pop fixed z-[80] overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_24px_60px_rgba(15,23,42,0.16)] backdrop-blur",
+              openDirection === "up" ? "origin-bottom" : "origin-top",
+            )}
+            style={panelStyle}
+          >
+            <div className="border-b border-slate-100 bg-[linear-gradient(180deg,rgba(248,250,252,0.92)_0%,rgba(255,255,255,0.96)_100%)] px-3 py-2 text-[11px] font-medium uppercase text-slate-500">
+              Select an option
+            </div>
+            <div id={listboxId} className="overflow-y-auto p-2" style={{ maxHeight: panelStyle.maxHeight }} role="listbox" aria-labelledby={id}>
+              {options.map((option) => {
+                const active = option.value === selectedValue;
 
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="option"
-                  aria-selected={active}
-                  disabled={option.disabled}
-                  className={cn(
-                    "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-200",
-                    active && "bg-blue-50 text-blue-700 shadow-sm",
-                    !active && "text-slate-700 hover:bg-slate-100 hover:text-slate-950",
-                    option.disabled && "cursor-not-allowed opacity-45",
-                  )}
-                  onClick={() => !option.disabled && commitValue(option.value)}
-                >
-                  <span className="truncate">{option.label}</span>
-                  <span
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    disabled={option.disabled}
                     className={cn(
-                      "flex h-5 w-5 items-center justify-center rounded-full border transition-all duration-200",
-                      active ? "border-blue-200 bg-white text-blue-600" : "border-slate-200 bg-slate-50 text-transparent",
+                      "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-200",
+                      active && "bg-blue-50 text-blue-700 shadow-sm",
+                      !active && "text-slate-700 hover:bg-slate-100 hover:text-slate-950",
+                      option.disabled && "cursor-not-allowed opacity-45",
                     )}
+                    onClick={() => !option.disabled && commitValue(option.value)}
                   >
-                    <Check className="h-3.5 w-3.5" />
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                    <span className="truncate">{option.label}</span>
+                    <span
+                      className={cn(
+                        "flex h-5 w-5 items-center justify-center rounded-full border transition-all duration-200",
+                        active ? "border-blue-200 bg-white text-blue-600" : "border-slate-200 bg-slate-50 text-transparent",
+                      )}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

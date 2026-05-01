@@ -48,6 +48,20 @@ class QdrantStoreClient:
             return
         await self._client.upsert(collection_name=collection_name, points=points, wait=False)
 
+    async def delete_points(self, collection_name: str, point_ids: list[str]) -> None:
+        """Delete chunk vector points from Qdrant by point id."""
+
+        if not point_ids:
+            return
+        exists = await self._client.collection_exists(collection_name)
+        if not exists:
+            return
+        await self._client.delete(
+            collection_name=collection_name,
+            points_selector=models.PointIdsList(points=point_ids),
+            wait=True,
+        )
+
     async def query_dense(
         self,
         collection_name: str,
