@@ -3,9 +3,27 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { BookOpen, FileText, LayoutDashboard, LogOut, Search, Server, Users } from "lucide-react";
+import {
+  BookOpen,
+  Database,
+  ExternalLink,
+  FileText,
+  HardDrive,
+  LayoutDashboard,
+  LogOut,
+  Plug,
+  Search,
+  Server,
+  Users,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { clearToken, getCurrentUserFromToken, getToken } from "@/lib/api";
+import {
+  clearToken,
+  getCurrentUserFromToken,
+  getToken,
+  MINIO_CONSOLE_URL,
+  QDRANT_DASHBOARD_URL,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -13,7 +31,13 @@ const navItems = [
   { href: "/knowledge-bases", label: "Knowledge Bases", icon: BookOpen, roles: ["admin", "editor", "viewer"] },
   { href: "/documents", label: "Documents", icon: FileText, roles: ["admin", "editor", "viewer"] },
   { href: "/retrieval", label: "Retrieval Console", icon: Search, roles: ["admin", "editor", "viewer"] },
+  { href: "/mcp", label: "MCP Guide", icon: Plug, roles: ["admin", "editor", "viewer"] },
   { href: "/users", label: "Users", icon: Users, roles: ["admin"] },
+];
+
+const externalWebUis = [
+  { href: MINIO_CONSOLE_URL, label: "MinIO", icon: HardDrive },
+  { href: QDRANT_DASHBOARD_URL, label: "Qdrant", icon: Database },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -81,6 +105,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="border-t border-slate-200 px-4 py-4">
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+              <span>External Web UIs</span>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </div>
+            <div className="space-y-2">
+              {externalWebUis.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Button
+                    key={item.label}
+                    asChild
+                    variant="outline"
+                    className="h-9 w-full justify-start gap-2 px-3 text-xs"
+                  >
+                    <a href={item.href} target="_blank" rel="noreferrer" title={item.href}>
+                      <Icon className="h-3.5 w-3.5" />
+                      <span className="min-w-0 flex-1 text-left">{item.label}</span>
+                      <ExternalLink className="h-3.5 w-3.5 text-slate-400" />
+                    </a>
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
           <div className="mb-3 truncate text-xs">
             <p className="truncate font-medium text-slate-800" title={email}>
               {email || "Signed in"}

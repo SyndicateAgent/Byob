@@ -54,6 +54,36 @@ npm run dev
 
 The console uses `NEXT_PUBLIC_API_BASE_URL` and defaults to `http://localhost:8000`. The API allows browser requests from `CORS_ALLOWED_ORIGINS`, which defaults to local Next.js development origins.
 
+The sidebar includes external Web UI buttons for MinIO and Qdrant. Override their targets with `NEXT_PUBLIC_MINIO_CONSOLE_URL` and `NEXT_PUBLIC_QDRANT_DASHBOARD_URL` when those services are exposed through a reverse proxy or non-default ports.
+
+Run the MCP server when an AI Agent should call BYOB as a local tool provider. The default transport is stdio, which is what most MCP clients expect:
+
+```powershell
+uv run python -m api.app.mcp_server
+```
+
+Example MCP client configuration:
+
+```json
+{
+	"mcpServers": {
+		"byob": {
+			"command": "uv",
+			"args": ["run", "python", "-m", "api.app.mcp_server"],
+			"cwd": "C:/Project/Byob"
+		}
+	}
+}
+```
+
+For HTTP-capable MCP clients, BYOB can also run a Streamable HTTP MCP server:
+
+```powershell
+uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1 --port 8010
+```
+
+Detailed MCP setup, tool parameters, examples, and troubleshooting notes are available in the console at `/mcp` and in [docs/mcp.md](docs/mcp.md).
+
 ## API Surface
 
 Management endpoints use JWT login for local console users:
@@ -90,6 +120,15 @@ Retrieval endpoints are direct local APIs intended for AI Agents running in the 
 - `POST /api/v1/retrieval/rerank`
 - `POST /api/v1/retrieval/embed`
 - `POST /api/v1/retrieval/{request_id}/feedback`
+
+MCP tools exposed by `api.app.mcp_server`:
+
+- `list_knowledge_bases`
+- `list_documents`
+- `search_knowledge_base`
+- `advanced_search_knowledge_base`
+- `multi_search_knowledge_base`
+- `get_document_chunks`
 
 Health and metrics endpoints:
 

@@ -1,4 +1,8 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+export const MINIO_CONSOLE_URL =
+  process.env.NEXT_PUBLIC_MINIO_CONSOLE_URL ?? "http://localhost:9001";
+export const QDRANT_DASHBOARD_URL =
+  process.env.NEXT_PUBLIC_QDRANT_DASHBOARD_URL ?? "http://localhost:6333/dashboard";
 const TOKEN_KEY = "byob_access_token";
 
 export function apiUrl(path: string) {
