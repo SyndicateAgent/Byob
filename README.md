@@ -4,6 +4,8 @@ BYOB is a self-hosted vector database management system built for AI Agent retri
 
 BYOB 是一个面向 AI Agent 检索场景的自部署向量数据库管理系统。它用于把本地文件和知识资料整理成可检索的向量知识库，并通过 HTTP API、MCP 工具和本地控制台交给 AI Agent 使用。
 
+在线项目文档 / Online documentation: [https://syndicateagent.github.io/Byob/](https://syndicateagent.github.io/Byob/)
+
 ## 目录 / Contents
 
 - [中文说明](#中文说明)
