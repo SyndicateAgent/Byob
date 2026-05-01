@@ -3,14 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  BookOpen,
-  FileText,
-  LayoutDashboard,
-  LogOut,
-  Search,
-  Users,
-} from "lucide-react";
+import { BookOpen, FileText, LayoutDashboard, LogOut, Search, Server, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clearToken, getCurrentUserFromToken, getToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -55,11 +48,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <aside className="fixed inset-y-0 left-0 flex w-64 flex-col border-r border-slate-200 bg-white">
+    <div className="min-h-screen">
+      <aside className="fixed inset-y-0 left-0 flex w-64 flex-col border-r border-slate-200 bg-white/95 backdrop-blur">
         <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-sm font-bold text-white shadow-sm">
-            B
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-950 text-white shadow-sm">
+            <Server className="h-4 w-4" />
           </div>
           <div>
             <p className="font-semibold leading-tight">BYOB Console</p>
@@ -75,13 +68,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200",
                   active
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                    ? "bg-blue-50 text-blue-700 shadow-sm"
+                    : "text-slate-600 hover:translate-x-0.5 hover:bg-slate-100 hover:text-slate-900",
                 )}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
                 {item.label}
               </Link>
             );

@@ -8,6 +8,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Input, Textarea } from "@/components/ui/input";
 import { Label } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
+import { PageHeader } from "@/components/ui/page-header";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { apiRequest } from "@/lib/api";
 import { formatDate, formatNumber, statusVariant } from "@/lib/utils";
@@ -59,20 +60,18 @@ export default function KnowledgeBasesPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Knowledge Bases</h1>
-          <p className="text-sm text-slate-500">
-            Each knowledge base maps to a dedicated Qdrant collection in this self-hosted instance.
-          </p>
-        </div>
-        <Button className="gap-2" onClick={() => setOpen(true)}>
-          <Plus className="h-4 w-4" /> New knowledge base
-        </Button>
-      </header>
+      <PageHeader
+        title="Knowledge Bases"
+        description="Each knowledge base maps to a dedicated Qdrant collection in this self-hosted instance."
+        action={
+          <Button className="gap-2" onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4" /> New knowledge base
+          </Button>
+        }
+      />
       {error && <p className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-      <Card className="p-0">
+      <Card className="animate-fade-up p-0">
         <Table>
           <THead>
             <TR>

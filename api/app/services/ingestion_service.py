@@ -95,7 +95,6 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                 select(KnowledgeBase).where(KnowledgeBase.id == document.kb_id)
             )
             current_kb = kb_result.scalar_one()
-            current_document.status = "completed"
             current_document.error_message = None
             current_document.chunk_count = len(chunks)
             await refresh_knowledge_base_counts(session, current_kb.id)
@@ -106,6 +105,17 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             knowledge_base.embedding_dim,
         )
         await qdrant_client.upsert_chunks(knowledge_base.qdrant_collection, points)
+
+        async with session_factory() as session:
+            document_result = await session.execute(
+                select(Document).where(Document.id == document.id)
+            )
+            current_document = document_result.scalar_one()
+            current_document.status = "completed"
+            current_document.error_message = None
+            current_document.chunk_count = len(chunks)
+            await refresh_knowledge_base_counts(session, current_document.kb_id)
+            await session.commit()
     except Exception as exc:
         await mark_document_failed(session_factory, document_id, str(exc))
         raise

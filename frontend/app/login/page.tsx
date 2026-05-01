@@ -40,11 +40,12 @@ export default function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 p-6 text-slate-100">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_#1d4ed8_0%,_transparent_55%),radial-gradient(circle_at_bottom_right,_#7c3aed_0%,_transparent_45%)] opacity-40" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,_rgba(148,163,184,.12)_1px,_transparent_1px),linear-gradient(0deg,_rgba(148,163,184,.10)_1px,_transparent_1px)] bg-[size:32px_32px]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent" />
       <div className="relative grid w-full max-w-5xl gap-10 lg:grid-cols-[1.1fr_1fr]">
-        <div className="hidden flex-col justify-between text-slate-200 lg:flex">
+        <div className="hidden animate-fade-up flex-col justify-between text-slate-200 lg:flex">
           <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-slate-400">BYOB Console</p>
+            <p className="text-xs uppercase text-slate-400">BYOB Console</p>
             <h1 className="mt-4 text-4xl font-semibold leading-tight text-white">
               BYOB Vector Database
             </h1>
@@ -59,7 +60,7 @@ export default function LoginPage() {
             <li>Direct local API access for AI Agents</li>
           </ul>
         </div>
-        <Card className="w-full bg-white text-slate-900 shadow-2xl">
+        <Card className="animate-soft-pop w-full bg-white text-slate-900 shadow-2xl">
           <CardHeader>
             <CardTitle>Sign in to BYOB</CardTitle>
             <CardDescription>Use a local management console account.</CardDescription>

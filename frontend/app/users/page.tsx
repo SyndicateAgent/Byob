@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { PageHeader } from "@/components/ui/page-header";
 import { Label, Select } from "@/components/ui/select";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { apiRequest, getCurrentUserFromToken } from "@/lib/api";
@@ -94,18 +95,18 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Users</h1>
-          <p className="text-sm text-slate-500">Manage local management console accounts.</p>
-        </div>
-        <Button className="gap-2" onClick={() => setOpen(true)}>
-          <Plus className="h-4 w-4" /> New user
-        </Button>
-      </header>
+      <PageHeader
+        title="Users"
+        description="Manage local management console accounts."
+        action={
+          <Button className="gap-2" onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4" /> New user
+          </Button>
+        }
+      />
       {error && <p className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-      <Card className="p-0">
+      <Card className="animate-fade-up p-0">
         <Table>
           <THead>
             <TR>

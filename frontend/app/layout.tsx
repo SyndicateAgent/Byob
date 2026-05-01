@@ -4,7 +4,7 @@ import { AppShell } from "@/components/app-shell";
 
 export const metadata: Metadata = {
   title: "BYOB Console",
-  description: "Management console for BYOB knowledge base BaaS",
+  description: "Management console for a self-hosted vector database system",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
