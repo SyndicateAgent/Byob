@@ -15,13 +15,10 @@ class RetrievalLog(Base):
     __tablename__ = "retrieval_logs"
     __table_args__ = (
         Index("idx_retrieval_logs_request", "request_id"),
-        Index("idx_retrieval_logs_tenant_time", "tenant_id", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     request_id: Mapped[UUID] = mapped_column(nullable=False)
-    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
-    api_key_id: Mapped[UUID | None] = mapped_column()
     kb_ids: Mapped[list[UUID] | None] = mapped_column(ARRAY(item_type=PG_UUID(as_uuid=True)))
     query: Mapped[str | None] = mapped_column(Text)
     rewritten_query: Mapped[str | None] = mapped_column(Text)

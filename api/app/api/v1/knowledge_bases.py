@@ -33,9 +33,9 @@ async def create_knowledge_base_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
 ) -> KnowledgeBaseResponse:
-    """Create a tenant-scoped knowledge base and its Qdrant collection."""
+    """Create a knowledge base and its Qdrant collection."""
 
-    knowledge_base = await create_knowledge_base(session, current_user.tenant_id, payload)
+    knowledge_base = await create_knowledge_base(session, payload)
     await request.app.state.qdrant_client.ensure_hybrid_collection(
         knowledge_base.qdrant_collection,
         knowledge_base.embedding_dim,
@@ -49,9 +49,9 @@ async def list_knowledge_bases_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
 ) -> KnowledgeBaseListResponse:
-    """List knowledge bases for the current tenant."""
+    """List knowledge bases for this instance."""
 
-    rows = await list_knowledge_bases(session, current_user.tenant_id)
+    rows = await list_knowledge_bases(session)
     return KnowledgeBaseListResponse(
         request_id=request.state.request_id,
         data=[KnowledgeBaseResponse.model_validate(row) for row in rows],
@@ -64,9 +64,9 @@ async def get_knowledge_base_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
 ) -> KnowledgeBaseResponse:
-    """Return one tenant-owned knowledge base."""
+    """Return one knowledge base."""
 
-    knowledge_base = await get_knowledge_base(session, current_user.tenant_id, kb_id)
+    knowledge_base = await get_knowledge_base(session, kb_id)
     if knowledge_base is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -82,9 +82,9 @@ async def update_knowledge_base_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
 ) -> KnowledgeBaseResponse:
-    """Update one tenant-owned knowledge base."""
+    """Update one knowledge base."""
 
-    knowledge_base = await get_knowledge_base(session, current_user.tenant_id, kb_id)
+    knowledge_base = await get_knowledge_base(session, kb_id)
     if knowledge_base is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -100,9 +100,9 @@ async def delete_knowledge_base_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
 ) -> None:
-    """Delete one tenant-owned knowledge base."""
+    """Delete one knowledge base."""
 
-    knowledge_base = await get_knowledge_base(session, current_user.tenant_id, kb_id)
+    knowledge_base = await get_knowledge_base(session, kb_id)
     if knowledge_base is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -120,7 +120,7 @@ async def get_knowledge_base_stats_endpoint(
 ) -> KnowledgeBaseStatsResponse:
     """Return basic ingestion statistics for a knowledge base."""
 
-    knowledge_base = await get_knowledge_base(session, current_user.tenant_id, kb_id)
+    knowledge_base = await get_knowledge_base(session, kb_id)
     if knowledge_base is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

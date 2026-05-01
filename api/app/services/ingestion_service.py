@@ -70,7 +70,6 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                     id=point_id,
                     document_id=document.id,
                     kb_id=document.kb_id,
-                    tenant_id=document.tenant_id,
                     chunk_index=index,
                     content=parsed_chunk.content,
                     content_hash=sha256(parsed_chunk.content.encode("utf-8")).hexdigest(),
@@ -192,7 +191,6 @@ def build_qdrant_point(
         },
         payload={
             "chunk_id": str(chunk.id),
-            "tenant_id": str(chunk.tenant_id),
             "doc_id": str(chunk.document_id),
             "chunk_type": chunk.chunk_type,
             "tags": chunk.metadata_.get("tags", []),

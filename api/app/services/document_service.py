@@ -31,7 +31,6 @@ async def create_file_document(
 
     document = Document(
         kb_id=knowledge_base.id,
-        tenant_id=knowledge_base.tenant_id,
         name=name,
         file_type=file_type,
         file_size=file_size,
@@ -57,7 +56,6 @@ async def create_text_document(
     encoded = payload.content.encode("utf-8")
     document = Document(
         kb_id=knowledge_base.id,
-        tenant_id=knowledge_base.tenant_id,
         name=payload.name,
         file_type="md" if payload.file_type == "markdown" else payload.file_type,
         file_size=len(encoded),
@@ -82,7 +80,6 @@ async def create_url_document(
     source_url = str(payload.url)
     document = Document(
         kb_id=knowledge_base.id,
-        tenant_id=knowledge_base.tenant_id,
         name=payload.name or source_url,
         file_type="html",
         source_type="url",
@@ -104,10 +101,7 @@ async def list_documents(
 
     result = await session.execute(
         select(Document)
-        .where(
-            Document.kb_id == knowledge_base.id,
-            Document.tenant_id == knowledge_base.tenant_id,
-        )
+        .where(Document.kb_id == knowledge_base.id)
         .order_by(Document.created_at.desc())
     )
     return list(result.scalars().all())
@@ -115,14 +109,11 @@ async def list_documents(
 
 async def get_document(
     session: AsyncSession,
-    tenant_id: UUID,
     document_id: UUID,
 ) -> Document | None:
-    """Return a tenant-owned document if present."""
+    """Return a document if present."""
 
-    result = await session.execute(
-        select(Document).where(Document.id == document_id, Document.tenant_id == tenant_id)
-    )
+    result = await session.execute(select(Document).where(Document.id == document_id))
     return result.scalar_one_or_none()
 
 
@@ -131,10 +122,7 @@ async def list_chunks(session: AsyncSession, document: Document) -> list[Chunk]:
 
     result = await session.execute(
         select(Chunk)
-        .where(
-            Chunk.document_id == document.id,
-            Chunk.tenant_id == document.tenant_id,
-        )
+        .where(Chunk.document_id == document.id)
         .order_by(Chunk.chunk_index.asc())
     )
     return list(result.scalars().all())

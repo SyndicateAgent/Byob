@@ -21,25 +21,6 @@ export interface DocumentItem {
   created_at: string;
 }
 
-export interface ApiKeyItem {
-  id: string;
-  name: string;
-  key_prefix: string | null;
-  rate_limit: number;
-  revoked: boolean;
-  created_at: string;
-}
-
-export interface UsageDaily {
-  date: string;
-  api_calls: number;
-  retrieval_calls: number;
-  documents_uploaded: number;
-  chunks_created: number;
-  embedding_tokens: number;
-  storage_bytes: number;
-}
-
 export interface RetrievalResult {
   chunk_id: string;
   content: string;
@@ -52,4 +33,17 @@ export interface RetrievalResult {
     name: string;
     metadata: Record<string, unknown>;
   };
+}
+
+export interface UserItem {
+  id: string;
+  email: string;
+  role: string;
+  created_at: string;
+}
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  role: string;
 }

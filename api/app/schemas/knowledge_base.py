@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class KnowledgeBaseCreateRequest(BaseModel):
-    """Input for creating a tenant-scoped knowledge base."""
+    """Input for creating a knowledge base."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -37,7 +37,6 @@ class KnowledgeBaseResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     id: UUID
-    tenant_id: UUID
     name: str
     description: str | None
     embedding_model: str

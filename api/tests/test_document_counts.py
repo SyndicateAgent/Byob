@@ -22,7 +22,6 @@ async def test_refresh_knowledge_base_counts_recomputes_from_rows() -> None:
 
     knowledge_base = KnowledgeBase(
         id=uuid4(),
-        tenant_id=uuid4(),
         name="Test KB",
         qdrant_collection="test_collection",
         document_count=99,

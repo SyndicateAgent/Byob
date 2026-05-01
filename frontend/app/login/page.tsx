@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/select";
 import { apiRequest, setToken } from "@/lib/api";
 
 interface TokenResponse {
@@ -16,10 +17,12 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setSubmitting(true);
     try {
       const response = await apiRequest<TokenResponse>("/api/v1/auth/login", {
         method: "POST",
@@ -27,40 +30,70 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
       setToken(response.access_token);
-      router.push("/knowledge-bases");
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setSubmitting(false);
     }
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Sign in to BYOB</CardTitle>
-          <CardDescription>Use a management console account.</CardDescription>
-        </CardHeader>
-        <form className="space-y-4" onSubmit={onSubmit}>
-          <Input
-            type="email"
-            placeholder="admin@example.com"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            required
-          />
-          <Input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-          {error && <p className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-          <Button className="w-full" type="submit">
-            Sign in
-          </Button>
-        </form>
-      </Card>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 p-6 text-slate-100">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_#1d4ed8_0%,_transparent_55%),radial-gradient(circle_at_bottom_right,_#7c3aed_0%,_transparent_45%)] opacity-40" />
+      <div className="relative grid w-full max-w-5xl gap-10 lg:grid-cols-[1.1fr_1fr]">
+        <div className="hidden flex-col justify-between text-slate-200 lg:flex">
+          <div>
+            <p className="text-xs uppercase tracking-[0.4em] text-slate-400">BYOB Console</p>
+            <h1 className="mt-4 text-4xl font-semibold leading-tight text-white">
+              BYOB Vector Database
+            </h1>
+            <p className="mt-3 max-w-md text-sm text-slate-300">
+              A self-hosted vector database management system for AI Agents, with managed ingestion,
+              Qdrant-backed hybrid search, and local retrieval APIs.
+            </p>
+          </div>
+          <ul className="space-y-3 text-sm text-slate-300">
+            <li>Hybrid retrieval with rerank</li>
+            <li>Knowledge base and document management</li>
+            <li>Direct local API access for AI Agents</li>
+          </ul>
+        </div>
+        <Card className="w-full bg-white text-slate-900 shadow-2xl">
+          <CardHeader>
+            <CardTitle>Sign in to BYOB</CardTitle>
+            <CardDescription>Use a local management console account.</CardDescription>
+          </CardHeader>
+          <form className="space-y-4" onSubmit={onSubmit}>
+            <div className="space-y-1">
+              <Label htmlFor="login-email">Email</Label>
+              <Input
+                id="login-email"
+                type="email"
+                placeholder="admin@example.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="login-password">Password</Label>
+              <Input
+                id="login-password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+            </div>
+            {error && <p className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+            <Button className="w-full" type="submit" disabled={submitting}>
+              {submitting ? "Signing in…" : "Sign in"}
+            </Button>
+          </form>
+        </Card>
+      </div>
     </div>
   );
 }

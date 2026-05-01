@@ -15,13 +15,11 @@ def qdrant_collection_name(kb_id: UUID) -> str:
 
 async def create_knowledge_base(
     session: AsyncSession,
-    tenant_id: UUID,
     payload: KnowledgeBaseCreateRequest,
 ) -> KnowledgeBase:
-    """Create a knowledge base record for one tenant."""
+    """Create a knowledge base record for this instance."""
 
     knowledge_base = KnowledgeBase(
-        tenant_id=tenant_id,
         name=payload.name,
         description=payload.description,
         embedding_model=payload.embedding_model,
@@ -39,30 +37,20 @@ async def create_knowledge_base(
     return knowledge_base
 
 
-async def list_knowledge_bases(session: AsyncSession, tenant_id: UUID) -> list[KnowledgeBase]:
-    """Return knowledge bases belonging to a tenant."""
+async def list_knowledge_bases(session: AsyncSession) -> list[KnowledgeBase]:
+    """Return knowledge bases in this instance."""
 
-    result = await session.execute(
-        select(KnowledgeBase)
-        .where(KnowledgeBase.tenant_id == tenant_id)
-        .order_by(KnowledgeBase.created_at.desc())
-    )
+    result = await session.execute(select(KnowledgeBase).order_by(KnowledgeBase.created_at.desc()))
     return list(result.scalars().all())
 
 
 async def get_knowledge_base(
     session: AsyncSession,
-    tenant_id: UUID,
     kb_id: UUID,
 ) -> KnowledgeBase | None:
-    """Return one tenant-owned knowledge base if present."""
+    """Return one knowledge base if present."""
 
-    result = await session.execute(
-        select(KnowledgeBase).where(
-            KnowledgeBase.id == kb_id,
-            KnowledgeBase.tenant_id == tenant_id,
-        )
-    )
+    result = await session.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
     return result.scalar_one_or_none()
 
 

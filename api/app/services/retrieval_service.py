@@ -44,8 +44,6 @@ async def search(
     rerank_client: RerankClient,
     *,
     request_id: str,
-    tenant_id: UUID,
-    api_key_id: UUID | None,
     payload: RetrievalRequest,
 ) -> RetrievalResponse:
     """Run standard hybrid retrieval over Qdrant and PostgreSQL."""
@@ -57,8 +55,8 @@ async def search(
     stages["embedding_ms"] = elapsed_ms(stage_started)
     dense_vector = query_vectors[0]
 
-    knowledge_bases = await load_knowledge_bases(session, tenant_id, payload.kb_ids)
-    query_filter = build_qdrant_filter(tenant_id, payload.filters)
+    knowledge_bases = await load_knowledge_bases(session, payload.kb_ids)
+    query_filter = build_qdrant_filter(payload.filters)
 
     dense_candidates: list[Candidate] = []
     sparse_candidates: list[Candidate] = []
@@ -95,9 +93,9 @@ async def search(
     fused = fused[: payload.top_k * 5]
 
     stage_started = perf_counter()
-    chunks = await load_chunks(session, tenant_id, [candidate.chunk_id for candidate in fused])
+    chunks = await load_chunks(session, [candidate.chunk_id for candidate in fused])
     chunk_by_id = {chunk.id: chunk for chunk in chunks}
-    documents = await load_documents(session, tenant_id, [chunk.document_id for chunk in chunks])
+    documents = await load_documents(session, [chunk.document_id for chunk in chunks])
     document_by_id = {document.id: document for document in documents}
     stages["fetch_content_ms"] = elapsed_ms(stage_started)
 
@@ -150,8 +148,6 @@ async def search(
     await write_retrieval_log(
         session,
         request_id=request_id,
-        tenant_id=tenant_id,
-        api_key_id=api_key_id,
         payload=payload,
         results=results,
         rerank_scores=rerank_scores,
@@ -180,14 +176,12 @@ def elapsed_ms(started: float) -> int:
 
 async def load_knowledge_bases(
     session: AsyncSession,
-    tenant_id: UUID,
     kb_ids: list[UUID],
 ) -> list[KnowledgeBase]:
-    """Load tenant-owned knowledge bases for retrieval."""
+    """Load active knowledge bases for retrieval."""
 
     result = await session.execute(
         select(KnowledgeBase).where(
-            KnowledgeBase.tenant_id == tenant_id,
             KnowledgeBase.id.in_(kb_ids),
             KnowledgeBase.status == "active",
         )
@@ -200,12 +194,10 @@ async def load_knowledge_bases(
     return knowledge_bases
 
 
-def build_qdrant_filter(tenant_id: UUID, filters: dict[str, object]) -> models.Filter:
-    """Build a Qdrant filter from tenant context and allowed filters."""
+def build_qdrant_filter(filters: dict[str, object]) -> models.Filter:
+    """Build a Qdrant filter from allowed public filters."""
 
-    conditions: list[models.Condition] = [
-        models.FieldCondition(key="tenant_id", match=models.MatchValue(value=str(tenant_id)))
-    ]
+    conditions: list[models.Condition] = []
     chunk_type = filters.get("chunk_type")
     if isinstance(chunk_type, str):
         conditions.append(
@@ -257,29 +249,24 @@ def rrf_fuse(rankings: list[list[Candidate]], k: int = RRF_K) -> list[Candidate]
     ]
 
 
-async def load_chunks(session: AsyncSession, tenant_id: UUID, chunk_ids: list[UUID]) -> list[Chunk]:
-    """Load chunks by IDs under tenant isolation."""
+async def load_chunks(session: AsyncSession, chunk_ids: list[UUID]) -> list[Chunk]:
+    """Load chunks by IDs."""
 
     if not chunk_ids:
         return []
-    result = await session.execute(
-        select(Chunk).where(Chunk.tenant_id == tenant_id, Chunk.id.in_(chunk_ids))
-    )
+    result = await session.execute(select(Chunk).where(Chunk.id.in_(chunk_ids)))
     return list(result.scalars().all())
 
 
 async def load_documents(
     session: AsyncSession,
-    tenant_id: UUID,
     document_ids: list[UUID],
 ) -> list[Document]:
-    """Load documents by IDs under tenant isolation."""
+    """Load documents by IDs."""
 
     if not document_ids:
         return []
-    result = await session.execute(
-        select(Document).where(Document.tenant_id == tenant_id, Document.id.in_(document_ids))
-    )
+    result = await session.execute(select(Document).where(Document.id.in_(document_ids)))
     return list(result.scalars().all())
 
 
@@ -339,8 +326,6 @@ async def write_retrieval_log(
     session: AsyncSession,
     *,
     request_id: str,
-    tenant_id: UUID,
-    api_key_id: UUID | None,
     payload: RetrievalRequest,
     results: list[RetrievalResult],
     rerank_scores: list[float] | None,
@@ -357,8 +342,6 @@ async def write_retrieval_log(
     session.add(
         RetrievalLog(
             request_id=log_request_id,
-            tenant_id=tenant_id,
-            api_key_id=api_key_id,
             kb_ids=payload.kb_ids,
             query=payload.query,
             retrieved_chunk_ids=[result.chunk_id for result in results],

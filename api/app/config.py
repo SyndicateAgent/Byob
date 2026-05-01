@@ -46,7 +46,6 @@ class Settings(BaseSettings):
     jwt_secret_key: SecretStr = SecretStr("change-me-in-production-with-at-least-32-bytes")
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
-    default_api_key_rate_limit: int = 100
 
     @property
     def cors_origins(self) -> list[str]:

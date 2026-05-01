@@ -9,7 +9,7 @@ from api.app.models.types import created_at_column, status_column, updated_at_co
 
 
 class Document(Base):
-    """Source document registered under one tenant knowledge base."""
+    """Source document registered under one knowledge base."""
 
     __tablename__ = "documents"
     __table_args__ = (
@@ -19,7 +19,6 @@ class Document(Base):
 
     id: Mapped[UUID] = uuid_pk()
     kb_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"))
-    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     file_type: Mapped[str | None] = mapped_column(String(50))
     file_size: Mapped[int | None] = mapped_column(BigInteger)

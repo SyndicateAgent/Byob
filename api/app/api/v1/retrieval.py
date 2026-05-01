@@ -139,18 +139,8 @@ async def feedback_endpoint(
 ) -> FeedbackResponse:
     """Attach feedback to a retrieval log row."""
 
-    tenant_id = getattr(request.state, "tenant_id", None)
-    if tenant_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing tenant context",
-        )
-
     result = await session.execute(
-        select(RetrievalLog).where(
-            RetrievalLog.request_id == request_id,
-            RetrievalLog.tenant_id == UUID(str(tenant_id)),
-        )
+        select(RetrievalLog).where(RetrievalLog.request_id == request_id)
     )
     retrieval_log = result.scalar_one_or_none()
     if retrieval_log is None:
@@ -169,17 +159,9 @@ async def run_search(
     *,
     use_cache: bool = True,
 ) -> RetrievalResponse:
-    """Run retrieval with tenant validation, optional cache, and logging."""
+    """Run retrieval with optional cache and logging."""
 
-    tenant_id = getattr(request.state, "tenant_id", None)
-    if tenant_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing tenant context",
-        )
-
-    api_key_id = getattr(request.state, "api_key_id", None)
-    cache_key = build_cache_key(UUID(str(tenant_id)), payload)
+    cache_key = build_cache_key(payload)
     cached = await request.app.state.redis_client.get_text(cache_key) if use_cache else None
     if use_cache and cached is not None:
         response = RetrievalResponse.model_validate_json(cached)
@@ -188,8 +170,6 @@ async def run_search(
         await write_cache_hit_log(
             session,
             request_id=request.state.request_id,
-            tenant_id=UUID(str(tenant_id)),
-            api_key_id=UUID(str(api_key_id)) if api_key_id is not None else None,
             payload=payload,
             response=response,
         )
@@ -203,8 +183,6 @@ async def run_search(
             request.app.state.embedding_client,
             request.app.state.rerank_client,
             request_id=request.state.request_id,
-            tenant_id=UUID(str(tenant_id)),
-            api_key_id=UUID(str(api_key_id)) if api_key_id is not None else None,
             payload=payload,
         )
     except ValueError as exc:
@@ -219,11 +197,11 @@ async def run_search(
     return response
 
 
-def build_cache_key(tenant_id: UUID, payload: RetrievalRequest) -> str:
-    """Return a stable cache key for one tenant retrieval request."""
+def build_cache_key(payload: RetrievalRequest) -> str:
+    """Return a stable cache key for a retrieval request."""
 
     digest = sha256(payload.model_dump_json().encode("utf-8")).hexdigest()
-    return f"retrieval:{tenant_id}:{digest}"
+    return f"retrieval:{digest}"
 
 
 def dedupe_queries(queries: list[str]) -> list[str]:
@@ -280,8 +258,6 @@ async def write_cache_hit_log(
     session: AsyncSession,
     *,
     request_id: str,
-    tenant_id: UUID,
-    api_key_id: UUID | None,
     payload: RetrievalRequest,
     response: RetrievalResponse,
 ) -> None:
@@ -295,8 +271,6 @@ async def write_cache_hit_log(
     session.add(
         RetrievalLog(
             request_id=log_request_id,
-            tenant_id=tenant_id,
-            api_key_id=api_key_id,
             kb_ids=payload.kb_ids,
             query=payload.query,
             retrieved_chunk_ids=[result.chunk_id for result in response.results],

@@ -1,6 +1,8 @@
 # BYOB
 
-BYOB is an enterprise knowledge base BaaS for RAG infrastructure. This service exposes standardized APIs for external Agent frameworks and does not implement Agent orchestration, conversation state, or prompt templates.
+BYOB is a self-hosted vector database management system for AI Agent retrieval. It provides knowledge base management, document ingestion, chunk storage, Qdrant-backed hybrid search, embedding, rerank, and a local management console.
+
+BYOB does not implement Agent orchestration, conversation state, prompt templates, tenant management, API key management, billing, or usage analytics.
 
 ## Local Development
 
@@ -12,11 +14,9 @@ uv run alembic upgrade head
 uv run uvicorn api.app.main:app --reload
 ```
 
-Docker Compose also starts Infinity-backed embedding and rerank services. The first startup downloads
-`BAAI/bge-m3` and `BAAI/bge-reranker-base` into Docker volumes, so it can take several minutes.
-Wait until `docker compose ps` shows both services as healthy before reprocessing documents.
+Docker Compose also starts Infinity-backed embedding and rerank services. The first startup downloads `BAAI/bge-m3` and `BAAI/bge-reranker-base` into Docker volumes, so it can take several minutes. Wait until `docker compose ps` shows both services as healthy before reprocessing documents.
 
-Create the first management admin after migrations. If this reports missing tables, run `uv run alembic upgrade head` against the same `DATABASE_URL` first:
+Create the first local management admin after migrations. If this reports missing tables, run `uv run alembic upgrade head` against the same `DATABASE_URL` first:
 
 ```powershell
 $env:BYOB_ADMIN_EMAIL = "admin@example.com"
@@ -32,8 +32,7 @@ Run the ingestion worker in a separate terminal when processing documents:
 uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO
 ```
 
-On Windows the worker defaults to Celery's `solo` pool because the process pool can fail with
-`billiard` handle errors.
+On Windows the worker defaults to Celery's `solo` pool because the process pool can fail with `billiard` handle errors.
 
 Run the management console in a separate terminal:
 
@@ -43,23 +42,36 @@ npm install
 npm run dev
 ```
 
-The console uses `NEXT_PUBLIC_API_BASE_URL` and defaults to `http://localhost:8000`.
-The API allows browser requests from `CORS_ALLOWED_ORIGINS`, which defaults to local Next.js development origins.
+The console uses `NEXT_PUBLIC_API_BASE_URL` and defaults to `http://localhost:8000`. The API allows browser requests from `CORS_ALLOWED_ORIGINS`, which defaults to local Next.js development origins.
 
-Health and metrics endpoints:
+## API Surface
 
-- `GET /healthz`
-- `GET /metrics`
+Management endpoints use JWT login for local console users:
 
-Phase 3 management endpoints:
+- `POST /api/v1/auth/login`
+- `GET /api/v1/users`
+- `POST /api/v1/users`
+- `PATCH /api/v1/users/{user_id}`
+- `DELETE /api/v1/users/{user_id}`
+
+Knowledge base and document endpoints:
 
 - `POST /api/v1/knowledge-bases`
+- `GET /api/v1/knowledge-bases`
+- `GET /api/v1/knowledge-bases/{kb_id}`
+- `PATCH /api/v1/knowledge-bases/{kb_id}`
+- `DELETE /api/v1/knowledge-bases/{kb_id}`
+- `GET /api/v1/knowledge-bases/{kb_id}/stats`
 - `POST /api/v1/knowledge-bases/{kb_id}/documents`
 - `POST /api/v1/knowledge-bases/{kb_id}/documents/text`
 - `POST /api/v1/knowledge-bases/{kb_id}/documents/url`
-- `GET /api/v1/documents/{id}/chunks`
+- `GET /api/v1/knowledge-bases/{kb_id}/documents`
+- `GET /api/v1/documents/{document_id}`
+- `GET /api/v1/documents/{document_id}/chunks`
+- `DELETE /api/v1/documents/{document_id}`
+- `POST /api/v1/documents/{document_id}/reprocess`
 
-Retrieval endpoint:
+Retrieval endpoints are direct local APIs intended for AI Agents running in the same trusted deployment environment:
 
 - `POST /api/v1/retrieval/search`
 - `POST /api/v1/retrieval/search/advanced`
@@ -68,7 +80,14 @@ Retrieval endpoint:
 - `POST /api/v1/retrieval/embed`
 - `POST /api/v1/retrieval/{request_id}/feedback`
 
-Infrastructure services started by Docker Compose:
+Health and metrics endpoints:
+
+- `GET /healthz`
+- `GET /metrics`
+
+## Infrastructure Services
+
+Docker Compose starts:
 
 - PostgreSQL 16 on `localhost:5432`
 - Redis 7 on `localhost:6379`
@@ -77,13 +96,13 @@ Infrastructure services started by Docker Compose:
 - Infinity embedding on `localhost:7997`
 - Infinity rerank on `localhost:7998`
 
-Quality checks:
+## Quality Checks
 
 ```powershell
 uv run ruff check .
-uv run mypy api
 uv run pytest
 cd frontend
-npm run typecheck
+npm run lint
+npx tsc --noEmit
 npm run build
 ```

@@ -61,12 +61,10 @@ def test_qdrant_point_payload_excludes_chunk_content() -> None:
     chunk_id = uuid4()
     document_id = uuid4()
     kb_id = uuid4()
-    tenant_id = uuid4()
     chunk = Chunk(
         id=chunk_id,
         document_id=document_id,
         kb_id=kb_id,
-        tenant_id=tenant_id,
         chunk_index=0,
         content="secret source text",
         chunk_type="text",
@@ -79,4 +77,5 @@ def test_qdrant_point_payload_excludes_chunk_content() -> None:
     assert point.payload is not None
     assert point.payload["chunk_id"] == str(chunk_id)
     assert "content" not in point.payload
+    assert "tenant_id" not in point.payload
     assert point.payload["tags"] == ["manual"]

@@ -7,18 +7,16 @@ from secrets import token_urlsafe
 
 from sqlalchemy import inspect, select
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from api.app.config import Settings
 from api.app.core.security import hash_password
 from api.app.db.session import create_engine, create_session_factory
-from api.app.models.tenant import Tenant
 from api.app.models.user import User
 
 DEFAULT_ADMIN_EMAIL = "admin@example.com"
-DEFAULT_TENANT_NAME = "Default Tenant"
 MIN_PASSWORD_LENGTH = 12
-REQUIRED_TABLES = {"tenants", "users"}
+REQUIRED_TABLES = {"users"}
 
 
 class SeedAdminError(Exception):
@@ -47,19 +45,6 @@ def get_admin_password() -> tuple[str, bool]:
     return password, False
 
 
-async def get_or_create_tenant(session: AsyncSession, tenant_name: str) -> Tenant:
-    """Return an existing tenant by name or create one."""
-
-    tenant = await session.scalar(select(Tenant).where(Tenant.name == tenant_name))
-    if tenant is not None:
-        return tenant
-
-    tenant = Tenant(name=tenant_name)
-    session.add(tenant)
-    await session.flush()
-    return tenant
-
-
 async def schema_has_required_tables(engine: AsyncEngine) -> bool:
     """Return whether Alembic has created the tables needed by this script."""
 
@@ -72,10 +57,9 @@ async def schema_has_required_tables(engine: AsyncEngine) -> bool:
 
 
 async def seed_admin() -> None:
-    """Create the first tenant admin account if it does not exist."""
+    """Create the first local admin account if it does not exist."""
 
     admin_email = os.getenv("BYOB_ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL).strip().lower()
-    tenant_name = os.getenv("BYOB_TENANT_NAME", DEFAULT_TENANT_NAME).strip()
     reset_password = env_bool("BYOB_ADMIN_RESET_PASSWORD")
     password, generated_password = get_admin_password()
 
@@ -91,12 +75,10 @@ async def seed_admin() -> None:
             )
 
         async with session_factory() as session:
-            tenant = await get_or_create_tenant(session, tenant_name)
             user = await session.scalar(select(User).where(User.email == admin_email))
 
             if user is None:
                 user = User(
-                    tenant_id=tenant.id,
                     email=admin_email,
                     password_hash=hash_password(password),
                     role="admin",
@@ -115,7 +97,6 @@ async def seed_admin() -> None:
         await engine.dispose()
 
     print(f"Admin user {action}: {admin_email}")
-    print(f"Tenant: {tenant_name}")
     if action == "exists":
         print("Password unchanged. Set BYOB_ADMIN_RESET_PASSWORD=true to reset it.")
     elif generated_password:

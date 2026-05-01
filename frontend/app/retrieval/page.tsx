@@ -1,10 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { Search } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input, Textarea } from "@/components/ui/input";
-import { apiRequest, setApiKey } from "@/lib/api";
+import { Textarea } from "@/components/ui/input";
+import { Label, Select } from "@/components/ui/select";
+import { apiRequest } from "@/lib/api";
 import type { KnowledgeBase, RetrievalResult } from "@/lib/types";
 
 interface SearchResponse {
@@ -20,7 +23,6 @@ export default function RetrievalPage() {
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [kbId, setKbId] = useState("");
   const [query, setQuery] = useState("");
-  const [apiKeyInput, setApiKeyInput] = useState("");
   const [response, setResponse] = useState<SearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,11 +38,10 @@ export default function RetrievalPage() {
   async function runSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    if (apiKeyInput) setApiKey(apiKeyInput);
     try {
       const result = await apiRequest<SearchResponse>("/api/v1/retrieval/search/advanced", {
         method: "POST",
-        auth: "api-key",
+        auth: "none",
         body: JSON.stringify({
           query,
           kb_ids: [kbId],
@@ -60,35 +61,39 @@ export default function RetrievalPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Retrieval Console</h1>
-        <p className="text-slate-500">Test hybrid dense+sparse search with optional query rewrite.</p>
-      </div>
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">Retrieval Console</h1>
+        <p className="text-sm text-slate-500">Test direct hybrid dense+sparse search for local AI Agents.</p>
+      </header>
       <Card>
         <CardHeader>
           <CardTitle>Search</CardTitle>
-          <CardDescription>Use an API key created in the API Keys page.</CardDescription>
+          <CardDescription>Retrieval endpoints are direct local APIs for your AI Agent runtime.</CardDescription>
         </CardHeader>
         <form className="space-y-3" onSubmit={runSearch}>
-          <select
-            className="h-10 rounded-md border border-slate-300 px-3 text-sm"
-            value={kbId}
-            onChange={(event) => setKbId(event.target.value)}
-          >
-            {kbs.map((kb) => (
-              <option key={kb.id} value={kb.id}>
-                {kb.name}
-              </option>
-            ))}
-          </select>
-          <Input
-            value={apiKeyInput}
-            onChange={(event) => setApiKeyInput(event.target.value)}
-            placeholder="Optional API key override"
-          />
-          <Textarea value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask a question" required />
-          <Button type="submit" disabled={!kbId}>
-            Run Search
+          <div className="space-y-1">
+            <Label htmlFor="retrieval-kb">Knowledge base</Label>
+            <Select id="retrieval-kb" value={kbId} onChange={(event) => setKbId(event.target.value)}>
+              {kbs.length === 0 && <option value="">No knowledge bases</option>}
+              {kbs.map((kb) => (
+                <option key={kb.id} value={kb.id}>
+                  {kb.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="retrieval-query">Query</Label>
+            <Textarea
+              id="retrieval-query"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Ask a question"
+              required
+            />
+          </div>
+          <Button type="submit" disabled={!kbId} className="gap-2">
+            <Search className="h-4 w-4" /> Run search
           </Button>
         </form>
       </Card>
@@ -98,18 +103,18 @@ export default function RetrievalPage() {
           <CardHeader>
             <CardTitle>Results</CardTitle>
             <CardDescription>
-              {response.results.length} results in {response.stats.total_latency_ms}ms, cache hit:{" "}
-              {response.stats.cache_hit ? "yes" : "no"}
+              {response.results.length} results in {response.stats.total_latency_ms}ms
+              {response.stats.cache_hit && <Badge className="ml-2">cache hit</Badge>}
             </CardDescription>
           </CardHeader>
           <div className="space-y-4">
             {response.results.map((result) => (
               <div key={result.chunk_id} className="rounded-lg border border-slate-200 p-4">
-                <div className="mb-2 flex justify-between text-sm text-slate-500">
+                <div className="mb-2 flex justify-between gap-4 text-sm text-slate-500">
                   <span>{result.document.name}</span>
                   <span>score {result.score.toFixed(4)}</span>
                 </div>
-                <p className="whitespace-pre-wrap text-sm">{result.content}</p>
+                <p className="whitespace-pre-wrap text-sm leading-6">{result.content}</p>
               </div>
             ))}
           </div>

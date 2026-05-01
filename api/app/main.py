@@ -15,10 +15,7 @@ from api.app.core.qdrant_client import QdrantStoreClient
 from api.app.core.redis_client import RedisClient
 from api.app.core.rerank import RerankClient
 from api.app.db.session import create_engine, create_session_factory
-from api.app.middleware.auth import ApiKeyAuthMiddleware
-from api.app.middleware.ratelimit import RateLimitMiddleware
 from api.app.middleware.request_context import RequestContextMiddleware
-from api.app.middleware.tenant import TenantContextMiddleware
 
 
 @asynccontextmanager
@@ -70,9 +67,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = resolved_settings
 
     app.add_middleware(MetricsMiddleware, enabled=resolved_settings.prometheus_metrics_enabled)
-    app.add_middleware(RateLimitMiddleware)
-    app.add_middleware(TenantContextMiddleware)
-    app.add_middleware(ApiKeyAuthMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,

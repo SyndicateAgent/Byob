@@ -1,6 +1,5 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "byob_access_token";
-const API_KEY_KEY = "byob_api_key";
 
 export function getToken() {
   if (typeof window === "undefined") return null;
@@ -23,17 +22,84 @@ export function redirectToLogin() {
   }
 }
 
-export function getApiKey() {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(API_KEY_KEY);
+export interface DecodedToken {
+  sub: string;
+  email: string;
+  role: string;
+  exp: number;
 }
 
-export function setApiKey(apiKey: string) {
-  window.localStorage.setItem(API_KEY_KEY, apiKey);
+export function decodeToken(token: string | null): DecodedToken | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json =
+      typeof atob === "function" ? atob(padded) : Buffer.from(padded, "base64").toString("utf-8");
+    return JSON.parse(json) as DecodedToken;
+  } catch {
+    return null;
+  }
+}
+
+export function getCurrentUserFromToken(): DecodedToken | null {
+  return decodeToken(getToken());
 }
 
 interface RequestOptions extends RequestInit {
-  auth?: "jwt" | "api-key" | "none";
+  auth?: "jwt" | "none";
+}
+
+export class ApiError extends Error {
+  status: number;
+  code: string | null;
+  detail: unknown;
+
+  constructor(status: number, message: string, code: string | null = null, detail: unknown = null) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+async function parseError(response: Response): Promise<ApiError> {
+  const contentType = response.headers.get("content-type") ?? "";
+  let message = `Request failed: ${response.status}`;
+  let code: string | null = null;
+  let detail: unknown = null;
+  if (contentType.includes("application/json")) {
+    try {
+      const body = (await response.json()) as Record<string, unknown>;
+      const err = (body as { error?: { message?: string; code?: string; detail?: unknown } }).error;
+      if (err && typeof err === "object") {
+        message = err.message ?? message;
+        code = err.code ?? null;
+        detail = err.detail ?? null;
+      } else if (typeof body.detail === "string") {
+        message = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        message = body.detail
+          .map((entry) => {
+            if (entry && typeof entry === "object" && "msg" in entry) {
+              return String((entry as { msg: unknown }).msg);
+            }
+            return JSON.stringify(entry);
+          })
+          .join(", ");
+      }
+    } catch {
+      // fall through to text path
+    }
+  } else {
+    try {
+      message = (await response.text()) || message;
+    } catch {
+      // ignore
+    }
+  }
+  return new ApiError(response.status, message, code, detail);
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -43,26 +109,20 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   if (options.auth !== "none") {
-    if (options.auth === "api-key") {
-      const apiKey = getApiKey();
-      if (apiKey) headers.set("X-API-Key", apiKey);
-    } else {
-      const token = getToken();
-      if (token) headers.set("Authorization", `Bearer ${token}`);
-    }
+    const token = getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers,
   });
-  if (response.status === 401) {
+  if (response.status === 401 && options.auth !== "none") {
     clearToken();
     redirectToLogin();
   }
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed: ${response.status}`);
+    throw await parseError(response);
   }
   if (response.status === 204) {
     return undefined as T;

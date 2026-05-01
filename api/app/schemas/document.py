@@ -32,7 +32,6 @@ class DocumentResponse(BaseModel):
 
     id: UUID
     kb_id: UUID
-    tenant_id: UUID
     name: str
     file_type: str | None
     file_size: int | None
@@ -65,7 +64,6 @@ class ChunkResponse(BaseModel):
     id: UUID
     document_id: UUID
     kb_id: UUID
-    tenant_id: UUID
     chunk_index: int
     content: str
     content_hash: str | None

@@ -54,7 +54,7 @@ async def upload_document_endpoint(
 ) -> DocumentResponse:
     """Upload a file document and enqueue ingestion."""
 
-    knowledge_base = await get_knowledge_base(session, current_user.tenant_id, kb_id)
+    knowledge_base = await get_knowledge_base(session, kb_id)
     if knowledge_base is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -69,7 +69,7 @@ async def upload_document_endpoint(
         )
 
     file_type = (file.filename or "document").rsplit(".", maxsplit=1)[-1].lower()
-    object_key = f"tenants/{current_user.tenant_id}/knowledge_bases/{kb_id}/{hash_content(content)}"
+    object_key = f"knowledge_bases/{kb_id}/{hash_content(content)}"
     await request.app.state.minio_client.put_object(
         object_key,
         content,
@@ -101,7 +101,7 @@ async def upload_text_document_endpoint(
 ) -> DocumentResponse:
     """Create a document from direct text input and enqueue ingestion."""
 
-    knowledge_base = await get_knowledge_base(session, current_user.tenant_id, kb_id)
+    knowledge_base = await get_knowledge_base(session, kb_id)
     if knowledge_base is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -125,7 +125,7 @@ async def upload_url_document_endpoint(
 ) -> DocumentResponse:
     """Create a document from a URL and enqueue ingestion."""
 
-    knowledge_base = await get_knowledge_base(session, current_user.tenant_id, kb_id)
+    knowledge_base = await get_knowledge_base(session, kb_id)
     if knowledge_base is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -145,7 +145,7 @@ async def list_documents_endpoint(
 ) -> DocumentListResponse:
     """List documents in a knowledge base."""
 
-    knowledge_base = await get_knowledge_base(session, current_user.tenant_id, kb_id)
+    knowledge_base = await get_knowledge_base(session, kb_id)
     if knowledge_base is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -164,9 +164,9 @@ async def get_document_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
 ) -> DocumentResponse:
-    """Return document details for the current tenant."""
+    """Return document details."""
 
-    document = await get_document(session, current_user.tenant_id, document_id)
+    document = await get_document(session, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return DocumentResponse.model_validate(document)
@@ -181,7 +181,7 @@ async def list_chunks_endpoint(
 ) -> ChunkListResponse:
     """List persisted chunks for one document."""
 
-    document = await get_document(session, current_user.tenant_id, document_id)
+    document = await get_document(session, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     chunks = await list_chunks(session, document)
@@ -199,7 +199,7 @@ async def delete_document_endpoint(
 ) -> None:
     """Delete a document and its chunks."""
 
-    document = await get_document(session, current_user.tenant_id, document_id)
+    document = await get_document(session, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     await delete_document(session, document)
@@ -213,7 +213,7 @@ async def reprocess_document_endpoint(
 ) -> DocumentResponse:
     """Reset a document and enqueue ingestion again."""
 
-    document = await get_document(session, current_user.tenant_id, document_id)
+    document = await get_document(session, document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     reset_document = await reset_document_for_reprocess(session, document)

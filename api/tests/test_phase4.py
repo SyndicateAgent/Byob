@@ -36,25 +36,21 @@ def test_rrf_fuse_combines_dense_and_sparse_rankings() -> None:
     assert {candidate.chunk_id for candidate in fused} == {first, second, third}
 
 
-def test_qdrant_filter_always_includes_tenant() -> None:
-    """Qdrant filters are always scoped to authenticated tenant context."""
+def test_qdrant_filter_includes_allowed_metadata_filters() -> None:
+    """Qdrant filters include only caller-requested metadata filters."""
 
-    tenant_id = uuid4()
-    query_filter = build_qdrant_filter(
-        tenant_id,
-        {"chunk_type": "text", "tags": ["manual"]},
-    )
+    query_filter = build_qdrant_filter({"chunk_type": "text", "tags": ["manual"]})
 
     assert isinstance(query_filter.must, list)
-    assert len(query_filter.must) == 3
+    assert len(query_filter.must) == 2
     assert all(isinstance(condition, models.FieldCondition) for condition in query_filter.must)
 
 
-def test_retrieval_cache_key_is_tenant_scoped() -> None:
-    """Retrieval cache keys include tenant identity."""
+def test_retrieval_cache_key_is_payload_scoped() -> None:
+    """Retrieval cache keys are stable for identical payloads and vary by payload."""
 
     payload = RetrievalRequest(kb_ids=[uuid4()], query="hello")
-    tenant_a = uuid4()
-    tenant_b = uuid4()
+    changed = RetrievalRequest(kb_ids=payload.kb_ids, query="hello again")
 
-    assert build_cache_key(tenant_a, payload) != build_cache_key(tenant_b, payload)
+    assert build_cache_key(payload) == build_cache_key(payload)
+    assert build_cache_key(payload) != build_cache_key(changed)

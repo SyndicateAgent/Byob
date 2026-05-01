@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from api.app.models.base import Base
@@ -14,14 +14,12 @@ from api.app.models.types import (
 
 
 class KnowledgeBase(Base):
-    """Tenant-scoped knowledge base with its own Qdrant collection."""
+    """Self-hosted knowledge base with its own Qdrant collection."""
 
     __tablename__ = "knowledge_bases"
-    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_knowledge_bases_tenant_name"),)
 
     id: Mapped[UUID] = uuid_pk()
-    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     embedding_model: Mapped[str] = mapped_column(String(100), server_default="BAAI/bge-m3")
     embedding_dim: Mapped[int] = mapped_column(Integer, server_default="1024")

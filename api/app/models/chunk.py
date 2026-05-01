@@ -21,7 +21,6 @@ class Chunk(Base):
     id: Mapped[UUID] = uuid_pk()
     document_id: Mapped[UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
     kb_id: Mapped[UUID] = mapped_column(nullable=False)
-    tenant_id: Mapped[UUID] = mapped_column(nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_hash: Mapped[str | None] = mapped_column(String(64))

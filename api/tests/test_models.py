@@ -5,14 +5,11 @@ def test_initial_metadata_contains_phase_one_tables() -> None:
     """SQLAlchemy metadata contains the initial platform schema tables."""
 
     expected_tables = {
-        "tenants",
         "users",
-        "api_keys",
         "knowledge_bases",
         "documents",
         "chunks",
         "retrieval_logs",
-        "usage_daily",
     }
 
     assert expected_tables.issubset(Base.metadata.tables.keys())

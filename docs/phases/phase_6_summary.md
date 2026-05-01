@@ -2,21 +2,12 @@
 
 ## Completed
 
-- Added a standalone Next.js management console under `frontend/`.
-- Added shadcn/ui-style local components for buttons, cards, inputs, and layout.
+- Added the Next.js management console under `frontend/`.
+- Added local UI primitives for buttons, cards, inputs, badges, tables, modals, and selects.
 - Added management JWT login and local token persistence.
-- Added knowledge base creation and listing views.
-- Added document upload, file upload, list, reprocess, and delete views.
-- Added API key creation/listing and local API key persistence for retrieval testing.
-- Added usage totals and daily usage breakdown.
-- Added an advanced retrieval console backed by Qdrant hybrid retrieval.
+- Added dashboard, knowledge base, document, user management, and retrieval console views.
+- Removed SaaS-style management surfaces so the console focuses on a single self-hosted vector database instance.
 
-## Notes And Pitfalls
+## Notes
 
-- The console defaults to `http://localhost:8000`; set `NEXT_PUBLIC_API_BASE_URL` for other API hosts.
-- Retrieval tests require a tenant API key. Creating one in the API Keys page stores it locally for the console.
-- Document processing still requires the Celery ingestion worker to be running.
-
-## Next Phase
-
-- Add SDKs and MCP integration on top of the stabilized API surface.
+The console defaults to `http://localhost:8000`; set `NEXT_PUBLIC_API_BASE_URL` for other API hosts. Document processing requires the Celery ingestion worker.
