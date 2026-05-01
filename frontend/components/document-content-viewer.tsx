@@ -157,7 +157,7 @@ function rewriteHtmlControlledAssets(html: string): string {
   return template.innerHTML;
 }
 
-function RenderedContent({
+export function RenderedContent({
   className,
   content,
   kind,

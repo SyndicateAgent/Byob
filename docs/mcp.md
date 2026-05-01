@@ -77,6 +77,8 @@ uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1
 http://127.0.0.1:8010/mcp
 ```
 
+控制台中的 `/agent` 页面会通过后端配置 `MCP_SERVER_URL` 调用这个 endpoint，用于快速测试 RAG 问答效果。如果设置了 `AGENT_LLM_ENDPOINT_URL`，Agent 会把 MCP 检索上下文交给 OpenAI-compatible Chat Completions 接口生成 Markdown 答案；未设置时会返回基于 source chunks 的抽取式答案。
+
 HTTP 模式适合统一网关或本机多 Agent 共享，但 BYOB MCP 本身不做 API Key 鉴权。生产环境暴露 HTTP MCP 时，应放在内网、VPN、反向代理鉴权或现有网关后面。
 
 ## 工具列表

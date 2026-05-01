@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     rerank_model: str = "BAAI/bge-reranker-base"
     rerank_enabled: bool = True
     retrieval_cache_ttl_seconds: int = 300
+    mcp_server_url: AnyUrl = AnyUrl("http://127.0.0.1:8010/mcp")
+    mcp_client_timeout_seconds: float = 60.0
+    agent_llm_endpoint_url: AnyUrl | None = None
+    agent_llm_api_key: SecretStr | None = None
+    agent_llm_model: str = "qwen2.5:7b-instruct"
+    agent_llm_timeout_seconds: float = 60.0
+    agent_max_context_chars: int = 12000
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
 

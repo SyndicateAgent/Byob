@@ -80,6 +80,39 @@ export interface RetrievalResult {
   };
 }
 
+export interface AgentSource {
+  source_id: string;
+  chunk_id: string;
+  kb_id: string;
+  document: {
+    id: string;
+    name: string;
+    metadata: Record<string, unknown>;
+  };
+  content: string;
+  score: number;
+  rerank_score: number | null;
+  chunk_type: string;
+  page_num: number | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentAskResponse {
+  request_id: string;
+  answer: string;
+  answer_format: "markdown";
+  model: string | null;
+  mcp_tool: string;
+  sources: AgentSource[];
+  stats: {
+    total_latency_ms: number;
+    retrieval_latency_ms: number;
+    generation_latency_ms: number;
+    mcp_session_id: string | null;
+  };
+  warnings: string[];
+}
+
 export interface UserItem {
   id: string;
   email: string;

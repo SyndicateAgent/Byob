@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BookOpen,
+  Bot,
   Database,
   ExternalLink,
   FileText,
@@ -31,6 +32,7 @@ const navItems = [
   { href: "/knowledge-bases", label: "Knowledge Bases", icon: BookOpen, roles: ["admin", "editor", "viewer"] },
   { href: "/documents", label: "Documents", icon: FileText, roles: ["admin", "editor", "viewer"] },
   { href: "/retrieval", label: "Retrieval Console", icon: Search, roles: ["admin", "editor", "viewer"] },
+  { href: "/agent", label: "QA Agent", icon: Bot, roles: ["admin", "editor", "viewer"] },
   { href: "/mcp", label: "MCP Guide", icon: Plug, roles: ["admin", "editor", "viewer"] },
   { href: "/users", label: "Users", icon: Users, roles: ["admin"] },
 ];

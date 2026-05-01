@@ -2,7 +2,7 @@
 
 BYOB is a self-hosted vector database management system for AI Agent retrieval. It provides knowledge base management, document ingestion, chunk storage, Qdrant-backed hybrid search, embedding, rerank, and a local management console.
 
-BYOB does not implement Agent orchestration, conversation state, prompt templates, tenant management, API key management, billing, or usage analytics.
+BYOB includes a simple console QA Agent for testing MCP-backed RAG results, but it does not implement production Agent orchestration, conversation state, tenant management, API key management, billing, or usage analytics.
 
 ## Local Development
 
@@ -84,6 +84,8 @@ uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1
 
 Detailed MCP setup, tool parameters, examples, and troubleshooting notes are available in the console at `/mcp` and in [docs/mcp.md](docs/mcp.md).
 
+The console QA Agent at `/agent` calls this Streamable HTTP MCP endpoint through `MCP_SERVER_URL`. Set `AGENT_LLM_ENDPOINT_URL` to an OpenAI-compatible chat completions base URL when you want generated answers; without it, the Agent returns an extractive Markdown answer from MCP source chunks so recall quality can still be checked.
+
 ## API Surface
 
 Management endpoints use JWT login for local console users:
@@ -120,6 +122,10 @@ Retrieval endpoints are direct local APIs intended for AI Agents running in the 
 - `POST /api/v1/retrieval/rerank`
 - `POST /api/v1/retrieval/embed`
 - `POST /api/v1/retrieval/{request_id}/feedback`
+
+Simple QA Agent endpoint for local RAG testing:
+
+- `POST /api/v1/agent/ask`
 
 MCP tools exposed by `api.app.mcp_server`:
 

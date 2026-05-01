@@ -59,7 +59,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="BYOB API",
-        description="BYOB knowledge base BaaS API. No Agent logic is implemented.",
+        description=(
+            "BYOB self-hosted vector database API with a simple "
+            "MCP-backed QA Agent tester."
+        ),
         version=resolved_settings.app_version,
         openapi_version="3.1.0",
         lifespan=lifespan,
