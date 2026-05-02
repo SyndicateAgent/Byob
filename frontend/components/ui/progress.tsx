@@ -51,7 +51,14 @@ export function ProgressBar({
             "h-full rounded-full transition-[width] duration-700 ease-out motion-reduce:transition-none",
             toneClasses[tone],
           )}
-          style={{ width: `${safeValue}%` }}
+          style={{
+            width: `${safeValue}%`,
+            backgroundImage: indeterminate
+              ? "linear-gradient(45deg, rgba(255,255,255,0.28) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.28) 50%, rgba(255,255,255,0.28) 75%, transparent 75%, transparent)"
+              : undefined,
+            backgroundSize: indeterminate ? "32px 32px" : undefined,
+            animation: indeterminate ? "progress-stripes 1s linear infinite" : undefined,
+          }}
         />
       </div>
     </div>

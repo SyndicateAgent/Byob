@@ -10,9 +10,10 @@ interface ModalProps {
   description?: string;
   children: React.ReactNode;
   className?: string;
+  overlayClassName?: string;
 }
 
-export function Modal({ open, onClose, title, description, children, className }: ModalProps) {
+export function Modal({ open, onClose, title, description, children, className, overlayClassName }: ModalProps) {
   React.useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
@@ -26,7 +27,7 @@ export function Modal({ open, onClose, title, description, children, className }
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/40 p-4"
+      className={cn("fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/40 p-4", overlayClassName)}
       role="dialog"
       aria-modal="true"
       onClick={onClose}

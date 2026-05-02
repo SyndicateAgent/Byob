@@ -67,6 +67,10 @@ def metadata_with_ingestion_progress(
     progress: int,
     status: str,
     detail: str,
+    completed: int | None = None,
+    total: int | None = None,
+    unit: str | None = None,
+    stage_progress: int | None = None,
     reset: bool = False,
 ) -> dict[str, object]:
     """Return document metadata with persisted ingestion progress."""
@@ -80,7 +84,7 @@ def metadata_with_ingestion_progress(
         if isinstance(existing_started_at, str):
             started_at = existing_started_at
 
-    base_metadata["ingestion_progress"] = {
+    progress_payload: dict[str, object] = {
         "stage": stage,
         "progress": max(0, min(100, progress)),
         "status": status,
@@ -88,6 +92,16 @@ def metadata_with_ingestion_progress(
         "started_at": started_at or now,
         "updated_at": now,
     }
+    if completed is not None:
+        progress_payload["completed"] = max(0, completed)
+    if total is not None:
+        progress_payload["total"] = max(0, total)
+    if unit:
+        progress_payload["unit"] = unit
+    if stage_progress is not None:
+        progress_payload["stage_progress"] = max(0, min(100, stage_progress))
+
+    base_metadata["ingestion_progress"] = progress_payload
     return base_metadata
 
 

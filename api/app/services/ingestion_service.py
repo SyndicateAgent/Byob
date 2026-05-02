@@ -38,6 +38,17 @@ from workers.parsers.pdf_parser import PdfParserConfig
 from workers.parsers.registry import parse_document_bytes
 
 SPARSE_INDEX_MODULUS = 1_000_003
+PARSING_PROGRESS = 24
+ASSETS_PROGRESS = 34
+CHUNKING_PROGRESS = 40
+CHUNKS_READY_PROGRESS = 46
+EMBEDDING_START_PROGRESS = 46
+EMBEDDING_END_PROGRESS = 84
+STORING_CHUNKS_PROGRESS = 86
+VISUAL_EMBEDDING_START_PROGRESS = 88
+VISUAL_EMBEDDING_END_PROGRESS = 91
+INDEXING_START_PROGRESS = 92
+INDEXING_END_PROGRESS = 99
 
 
 @dataclass(frozen=True)
@@ -54,6 +65,38 @@ class StoredParsedAssets:
 
     replacements: dict[str, str]
     assets: list[StoredParsedAsset]
+
+
+def progress_between(start: int, end: int, completed: int, total: int) -> int:
+    """Return an overall progress value for a bounded stage interval."""
+
+    if total <= 0:
+        return end
+    ratio = max(0.0, min(1.0, completed / total))
+    return start + int((end - start) * ratio)
+
+
+def stage_percent(completed: int, total: int) -> int:
+    """Return percentage completion for the current stage."""
+
+    if total <= 0:
+        return 100
+    return int(max(0.0, min(1.0, completed / total)) * 100)
+
+
+def count_clip_image_assets(
+    assets: list[StoredParsedAsset],
+    clip_embedding_client: ClipEmbeddingClient,
+) -> int:
+    """Return assets that will actually receive CLIP image embeddings."""
+
+    if not clip_embedding_client.enabled:
+        return 0
+    return sum(
+        1
+        for asset in assets
+        if asset.row.asset_type == "image" and is_clip_image_content_type(asset.row.content_type)
+    )
 
 
 async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
@@ -93,8 +136,9 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             session_factory,
             document.id,
             stage="parsing",
-            progress=30,
+            progress=PARSING_PROGRESS,
             detail="Parsing document content",
+            stage_progress=0,
         )
         parsed = parse_document_bytes(
             content,
@@ -118,8 +162,12 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             session_factory,
             document.id,
             stage="assets",
-            progress=44,
-            detail="Storing parsed assets",
+            progress=ASSETS_PROGRESS,
+            detail=f"Storing {len(parsed.assets)} parsed assets",
+            completed=0,
+            total=len(parsed.assets),
+            unit="assets",
+            stage_progress=0,
         )
         async with session_factory() as session:
             stale_visual_point_ids = await list_document_visual_point_ids(session, document)
@@ -137,6 +185,18 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                 parsed.assets,
             )
             await session.commit()
+        if parsed.assets:
+            await update_document_progress(
+                session_factory,
+                document.id,
+                stage="assets",
+                progress=CHUNKING_PROGRESS - 1,
+                detail=f"Stored {len(parsed.assets)}/{len(parsed.assets)} parsed assets",
+                completed=len(parsed.assets),
+                total=len(parsed.assets),
+                unit="assets",
+                stage_progress=100,
+            )
 
         parsed_text = rewrite_asset_references(parsed.text, stored_assets.replacements)
         parsed_metadata = {
@@ -155,8 +215,9 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             session_factory,
             document.id,
             stage="chunking",
-            progress=56,
+            progress=CHUNKING_PROGRESS,
             detail="Chunking parsed content",
+            stage_progress=0,
         )
         parsed_chunks = build_ingestion_chunks(
             parsed,
@@ -169,9 +230,24 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
         await update_document_progress(
             session_factory,
             document.id,
+            stage="chunking",
+            progress=CHUNKS_READY_PROGRESS,
+            detail=f"Built {len(parsed_chunks)} chunks",
+            completed=len(parsed_chunks),
+            total=len(parsed_chunks),
+            unit="chunks",
+            stage_progress=100,
+        )
+        await update_document_progress(
+            session_factory,
+            document.id,
             stage="embedding",
-            progress=70,
+            progress=EMBEDDING_START_PROGRESS,
             detail=f"Embedding {len(parsed_chunks)} chunks",
+            completed=0,
+            total=len(parsed_chunks),
+            unit="chunks",
+            stage_progress=0,
         )
 
         async def report_embedding_progress(completed: int, total: int) -> None:
@@ -179,8 +255,17 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                 session_factory,
                 document.id,
                 stage="embedding",
-                progress=70 + int((completed / max(total, 1)) * 10),
+                progress=progress_between(
+                    EMBEDDING_START_PROGRESS,
+                    EMBEDDING_END_PROGRESS,
+                    completed,
+                    total,
+                ),
                 detail=f"Embedded {completed}/{total} chunks",
+                completed=completed,
+                total=total,
+                unit="chunks",
+                stage_progress=stage_percent(completed, total),
             )
 
         embeddings = await embedding_client.embed_texts(
@@ -191,8 +276,12 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             session_factory,
             document.id,
             stage="storing_chunks",
-            progress=82,
-            detail="Persisting chunks",
+            progress=STORING_CHUNKS_PROGRESS,
+            detail=f"Persisting {len(parsed_chunks)} chunks",
+            completed=len(parsed_chunks),
+            total=len(parsed_chunks),
+            unit="chunks",
+            stage_progress=0,
         )
 
         async with session_factory() as session:
@@ -257,13 +346,18 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             await session.commit()
 
         visual_points: list[models.PointStruct] = []
-        if stored_assets.assets and chunks:
+        visual_asset_total = count_clip_image_assets(stored_assets.assets, clip_embedding_client)
+        if visual_asset_total and chunks:
             await update_document_progress(
                 session_factory,
                 document.id,
                 stage="visual_embedding",
-                progress=88,
-                detail="Embedding extracted images with CLIP",
+                progress=VISUAL_EMBEDDING_START_PROGRESS,
+                detail=f"Embedding {visual_asset_total} extracted images with CLIP",
+                completed=0,
+                total=visual_asset_total,
+                unit="images",
+                stage_progress=0,
             )
             visual_points = await build_visual_qdrant_points(
                 stored_assets.assets,
@@ -271,26 +365,89 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                 document=document,
                 clip_embedding_client=clip_embedding_client,
             )
+            await update_document_progress(
+                session_factory,
+                document.id,
+                stage="visual_embedding",
+                progress=VISUAL_EMBEDDING_END_PROGRESS,
+                detail=f"Embedded {len(visual_points)}/{visual_asset_total} image vectors",
+                completed=len(visual_points),
+                total=visual_asset_total,
+                unit="images",
+                stage_progress=stage_percent(len(visual_points), visual_asset_total),
+            )
 
+        total_vector_points = len(points) + len(visual_points)
         await update_document_progress(
             session_factory,
             document.id,
             stage="indexing",
-            progress=92,
-            detail="Writing vectors to Qdrant",
+            progress=INDEXING_START_PROGRESS,
+            detail=f"Writing {total_vector_points} vectors to Qdrant",
+            completed=0,
+            total=total_vector_points,
+            unit="vectors",
+            stage_progress=0,
         )
         await qdrant_client.ensure_hybrid_collection(
             knowledge_base.qdrant_collection,
             knowledge_base.embedding_dim,
         )
-        await qdrant_client.upsert_chunks(knowledge_base.qdrant_collection, points)
+
+        async def report_text_indexing(completed: int, total: int) -> None:
+            await update_document_progress(
+                session_factory,
+                document.id,
+                stage="indexing",
+                progress=progress_between(
+                    INDEXING_START_PROGRESS,
+                    INDEXING_END_PROGRESS,
+                    completed,
+                    total_vector_points,
+                ),
+                detail=f"Indexed {completed}/{total_vector_points} vectors",
+                completed=completed,
+                total=total_vector_points,
+                unit="vectors",
+                stage_progress=stage_percent(completed, total_vector_points),
+            )
+
+        await qdrant_client.upsert_chunks(
+            knowledge_base.qdrant_collection,
+            points,
+            progress_callback=report_text_indexing,
+        )
         if visual_points:
             visual_collection = visual_collection_name(knowledge_base.qdrant_collection)
             await qdrant_client.ensure_visual_collection(
                 visual_collection,
                 settings.clip_embedding_dimension,
             )
-            await qdrant_client.upsert_chunks(visual_collection, visual_points)
+
+            async def report_visual_indexing(completed: int, total: int) -> None:
+                overall_completed = len(points) + completed
+                await update_document_progress(
+                    session_factory,
+                    document.id,
+                    stage="indexing",
+                    progress=progress_between(
+                        INDEXING_START_PROGRESS,
+                        INDEXING_END_PROGRESS,
+                        overall_completed,
+                        total_vector_points,
+                    ),
+                    detail=f"Indexed {overall_completed}/{total_vector_points} vectors",
+                    completed=overall_completed,
+                    total=total_vector_points,
+                    unit="vectors",
+                    stage_progress=stage_percent(overall_completed, total_vector_points),
+                )
+
+            await qdrant_client.upsert_chunks(
+                visual_collection,
+                visual_points,
+                progress_callback=report_visual_indexing,
+            )
 
         async with session_factory() as session:
             document_result = await session.execute(
@@ -307,6 +464,10 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                 progress=100,
                 status="completed",
                 detail=f"{len(chunks)} chunks indexed",
+                completed=len(chunks),
+                total=len(chunks),
+                unit="chunks",
+                stage_progress=100,
             )
             current_document.chunk_count = len(chunks)
             await refresh_knowledge_base_counts(session, current_document.kb_id)
@@ -336,6 +497,10 @@ async def update_document_progress(
     stage: str,
     progress: int,
     detail: str,
+    completed: int | None = None,
+    total: int | None = None,
+    unit: str | None = None,
+    stage_progress: int | None = None,
 ) -> None:
     """Persist an ingestion progress milestone for clients that poll documents."""
 
@@ -350,6 +515,10 @@ async def update_document_progress(
             progress=progress,
             status=document.status,
             detail=detail,
+            completed=completed,
+            total=total,
+            unit=unit,
+            stage_progress=stage_progress,
         )
         await session.commit()
 

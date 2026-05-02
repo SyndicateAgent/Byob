@@ -24,7 +24,7 @@ import {
   Upload,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { DocumentContentViewer } from "@/components/document-content-viewer";
+import { DocumentContentViewer, RenderedContent } from "@/components/document-content-viewer";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDialog } from "@/components/ui/dialog-provider";
@@ -58,9 +58,29 @@ type IngestionProgress = {
   progress?: number;
   status?: string;
   detail?: string;
+  completed?: number;
+  total?: number;
+  unit?: string;
+  stage_progress?: number;
   started_at?: string;
   updated_at?: string;
 };
+
+const INGESTION_STAGE_RANK: Record<string, number> = {
+  reading_source: 0,
+  parsing: 1,
+  assets: 2,
+  chunking: 3,
+  embedding: 4,
+  storing_chunks: 5,
+  visual_embedding: 6,
+  indexing: 7,
+  completed: 8,
+  failed: 8,
+};
+const DOCUMENT_WORKSPACE_MODAL_CLASS =
+  "flex h-[calc(100vh-1rem)] max-h-[calc(100vh-1rem)] max-w-[96rem] flex-col overflow-hidden p-5 sm:h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-1.5rem)] sm:p-6";
+const DOCUMENT_WORKSPACE_MODAL_OVERLAY_CLASS = "p-2 sm:p-3";
 
 const ACTIVE_DOCUMENT_STATUSES = new Set(["pending", "processing"]);
 const DOCUMENT_PROGRESS_STORAGE_KEY = "byob_document_progress";
@@ -96,6 +116,10 @@ function documentIngestionProgress(document: DocumentItem): IngestionProgress | 
     progress: typeof progress.progress === "number" ? clampProgress(progress.progress) : undefined,
     status: typeof progress.status === "string" ? progress.status : undefined,
     detail: typeof progress.detail === "string" ? progress.detail : undefined,
+    completed: typeof progress.completed === "number" ? Math.max(0, progress.completed) : undefined,
+    total: typeof progress.total === "number" ? Math.max(0, progress.total) : undefined,
+    unit: typeof progress.unit === "string" ? progress.unit : undefined,
+    stage_progress: typeof progress.stage_progress === "number" ? clampProgress(progress.stage_progress) : undefined,
     started_at: typeof progress.started_at === "string" ? progress.started_at : undefined,
     updated_at: typeof progress.updated_at === "string" ? progress.updated_at : undefined,
   };
@@ -108,6 +132,27 @@ function documentProgressKey(document: DocumentItem) {
 
 function backendDocumentProgress(document: DocumentItem) {
   return documentIngestionProgress(document)?.progress;
+}
+
+function documentStageRank(document: DocumentItem) {
+  const stage = documentIngestionProgress(document)?.stage;
+  return stage ? INGESTION_STAGE_RANK[stage] : undefined;
+}
+
+function documentProgressDetail(document: DocumentItem) {
+  const progress = documentIngestionProgress(document);
+  if (!progress) return null;
+  if (
+    typeof progress.completed === "number" &&
+    typeof progress.total === "number" &&
+    progress.unit
+  ) {
+    const stageProgress =
+      typeof progress.stage_progress === "number" ? ` · ${progress.stage_progress}% stage` : "";
+    return `${formatNumber(progress.completed)} / ${formatNumber(progress.total)} ${progress.unit}${stageProgress}`;
+  }
+  if (typeof progress.stage_progress === "number") return `${progress.stage_progress}% stage`;
+  return progress.stage ?? null;
 }
 
 function readStoredProgress() {
@@ -190,9 +235,10 @@ function documentProgress(document: DocumentItem, optimisticValue: number | unde
   const backendProgress = backendDocumentProgress(document);
   if (status === "completed") return 100;
   if (status === "failed") return 100;
-  if (status === "pending") return Math.max(backendProgress ?? 0, optimisticValue ?? 0, 18);
-  if (status === "processing") return Math.max(backendProgress ?? 0, optimisticValue ?? 0, 44);
-  return Math.max(backendProgress ?? 0, optimisticValue ?? 0);
+  if (typeof backendProgress === "number") return backendProgress;
+  if (status === "pending") return Math.max(optimisticValue ?? 0, 18);
+  if (status === "processing") return Math.max(optimisticValue ?? 0, 24);
+  return Math.max(optimisticValue ?? 0, 0);
 }
 
 function documentProgressTone(document: DocumentItem) {
@@ -210,8 +256,8 @@ function documentStage(document: DocumentItem, progress: number) {
   const persistedProgress = documentIngestionProgress(document);
   if (persistedProgress?.detail) return persistedProgress.detail;
   if (status === "pending") return "Queued for worker";
-  if (progress < 55) return "Parsing and chunking";
-  if (progress < 82) return "Embedding chunks";
+  if (progress < 46) return "Parsing and chunking";
+  if (progress < 86) return "Embedding chunks";
   return "Writing vectors to Qdrant";
 }
 
@@ -219,20 +265,25 @@ function progressSteps(document: DocumentItem, progress: number): StepItem[] {
   const status = document.status.toLowerCase();
   const failed = status === "failed";
   const completed = status === "completed";
+  const rank = documentStageRank(document);
+  const parseDone = completed || (rank !== undefined ? rank >= INGESTION_STAGE_RANK.embedding : progress >= 46);
+  const embedDone = completed || (rank !== undefined ? rank >= INGESTION_STAGE_RANK.storing_chunks : progress >= 86);
+  const indexActive =
+    !failed && !completed && (rank !== undefined ? rank >= INGESTION_STAGE_RANK.storing_chunks : progress >= 86);
 
   return [
     { label: "Queued", state: failed ? "error" : progress >= 18 ? "done" : "active" },
     {
       label: "Parse",
-      state: failed ? "error" : completed || progress >= 55 ? "done" : status === "processing" ? "active" : "idle",
+      state: failed ? "error" : parseDone ? "done" : status === "processing" ? "active" : "idle",
     },
     {
       label: "Embed",
-      state: failed ? "error" : completed || progress >= 82 ? "done" : progress >= 55 ? "active" : "idle",
+      state: failed ? "error" : embedDone ? "done" : parseDone ? "active" : "idle",
     },
     {
       label: "Index",
-      state: failed ? "error" : completed ? "done" : progress >= 82 ? "active" : "idle",
+      state: failed ? "error" : completed ? "done" : indexActive ? "active" : "idle",
     },
   ];
 }
@@ -399,7 +450,11 @@ export default function DocumentsPage() {
           const status = document.status.toLowerCase();
           const ceiling = status === "pending" ? 38 : 94;
           const step = status === "pending" ? 4 : 7;
-          next[key] = Math.min(ceiling, documentProgress(document, next[key]) + step);
+          if (typeof backendDocumentProgress(document) === "number") {
+            next[key] = documentProgress(document, next[key]);
+          } else {
+            next[key] = Math.min(ceiling, documentProgress(document, next[key]) + step);
+          }
         }
         return next;
       });
@@ -1007,7 +1062,7 @@ export default function DocumentsPage() {
                   tone={documentProgressTone(latestActiveDocument)}
                   indeterminate={latestProgress < 100}
                   label="Embedding pipeline"
-                  detail={latestActiveDocument.status}
+                  detail={documentProgressDetail(latestActiveDocument) ?? latestActiveDocument.status}
                 />
                 <StepRail steps={progressSteps(latestActiveDocument, latestProgress)} />
               </div>
@@ -1165,6 +1220,7 @@ export default function DocumentsPage() {
                       value={progress}
                       tone={documentProgressTone(document)}
                       label={documentStage(document, progress)}
+                      detail={documentProgressDetail(document) ?? undefined}
                       indeterminate={isActiveDocument(document)}
                       showValue
                     />
@@ -1239,7 +1295,8 @@ export default function DocumentsPage() {
         onClose={() => setPreviewDocument(null)}
         title={previewDocument?.name ?? "Document content"}
         description={previewDocument ? `${previewDocument.source_type} / ${previewDocument.file_type ?? "-"}` : undefined}
-        className="flex h-[calc(100vh-2rem)] max-h-[56rem] max-w-6xl flex-col overflow-hidden"
+        className={DOCUMENT_WORKSPACE_MODAL_CLASS}
+        overlayClassName={DOCUMENT_WORKSPACE_MODAL_OVERLAY_CLASS}
       >
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
           {previewDocument && (
@@ -1299,7 +1356,8 @@ export default function DocumentsPage() {
         onClose={() => setGovernanceDocument(null)}
         title={governanceDocument ? `Governance - ${governanceDocument.name}` : "Governance"}
         description="Control which sources can enter formal Agent retrieval and keep an audit trail."
-        className="flex h-[calc(100vh-2rem)] max-h-[56rem] max-w-6xl flex-col overflow-hidden"
+        className={DOCUMENT_WORKSPACE_MODAL_CLASS}
+        overlayClassName={DOCUMENT_WORKSPACE_MODAL_OVERLAY_CLASS}
       >
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
           {governanceDocument && (
@@ -1319,7 +1377,7 @@ export default function DocumentsPage() {
 
           {governanceError && <p className="shrink-0 rounded bg-red-50 p-3 text-sm text-red-700">{governanceError}</p>}
 
-          <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[18rem_minmax(0,1fr)]">
+          <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[20rem_minmax(0,1fr)]">
             <aside className="min-h-0 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
               <GovernanceLevelButton
                 active={governanceView === "overview"}
@@ -1366,7 +1424,7 @@ export default function DocumentsPage() {
                       value={governanceProgress}
                       tone={documentProgressTone(governanceDocument)}
                       label="Indexing progress"
-                      detail={governanceIngestionProgress?.stage ?? governanceDocument.status}
+                      detail={documentProgressDetail(governanceDocument) ?? governanceIngestionProgress?.stage ?? governanceDocument.status}
                       indeterminate={isActiveDocument(governanceDocument)}
                     />
                     <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -1483,12 +1541,35 @@ export default function DocumentsPage() {
                       />
                     </div>
                   </div>
-                  <Textarea
-                    value={contentForm.content}
-                    onChange={(event) => setContentForm((current) => ({ ...current, content: event.target.value }))}
-                    placeholder="Load or edit document content"
-                    className="mt-3 min-h-[24rem] font-mono text-xs leading-5"
-                  />
+                  <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                    <div className="flex min-h-[32rem] flex-col overflow-hidden rounded-md border border-slate-200 bg-white xl:min-h-[calc(100vh-24rem)]">
+                      <div className="shrink-0 border-b border-slate-100 px-3 py-2 text-xs font-medium uppercase text-slate-500">
+                        Source
+                      </div>
+                      <Textarea
+                        value={contentForm.content}
+                        onChange={(event) => setContentForm((current) => ({ ...current, content: event.target.value }))}
+                        placeholder="Load or edit document content"
+                        className="min-h-0 flex-1 resize-none rounded-none border-0 font-mono text-xs leading-5 focus:border-transparent focus:ring-0"
+                      />
+                    </div>
+                    <div className="flex min-h-[32rem] flex-col overflow-hidden rounded-md border border-slate-200 bg-white xl:min-h-[calc(100vh-24rem)]">
+                      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-3 py-2">
+                        <p className="text-xs font-medium uppercase text-slate-500">Rendered preview</p>
+                        <Badge variant="muted">{contentForm.file_type === "md" ? "Markdown" : "Text"}</Badge>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-auto p-4">
+                        {contentForm.content.trim() ? (
+                          <RenderedContent
+                            content={contentForm.content}
+                            kind={contentForm.file_type === "md" ? "markdown" : "text"}
+                          />
+                        ) : (
+                          <p className="text-sm text-slate-500">No content to preview.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-between">
                     <Button type="button" variant="outline" onClick={() => setGovernanceView("overview")} className="gap-2">
                       <ArrowLeft className="h-4 w-4" /> Overview
@@ -1515,7 +1596,7 @@ export default function DocumentsPage() {
                         value={governanceProgress}
                         tone={documentProgressTone(governanceDocument)}
                         label="Current ingestion run"
-                        detail={documentStage(governanceDocument, governanceProgress)}
+                        detail={documentProgressDetail(governanceDocument) ?? documentStage(governanceDocument, governanceProgress)}
                         indeterminate={isActiveDocument(governanceDocument)}
                       />
                       <StepRail steps={progressSteps(governanceDocument, governanceProgress)} className="mt-3" />
@@ -1523,6 +1604,7 @@ export default function DocumentsPage() {
                         <QueueSummaryRow label="Chunks" value={formatNumber(governanceDocument.chunk_count)} tone="success" />
                         <QueueSummaryRow label="Version" value={`v${governanceDocument.current_version}`} tone="info" />
                         <QueueSummaryRow label="Stage" value={governanceIngestionProgress?.stage ?? "-"} tone="muted" />
+                        <QueueSummaryRow label="Work" value={documentProgressDetail(governanceDocument) ?? "-"} tone="muted" />
                         <QueueSummaryRow label="Updated" value={governanceIngestionProgress?.updated_at ? formatDate(governanceIngestionProgress.updated_at) : "-"} tone="muted" />
                       </div>
                       {governanceDocument.error_message && (

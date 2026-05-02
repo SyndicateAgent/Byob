@@ -1,11 +1,12 @@
 from asyncio import wait_for
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 VISUAL_COLLECTION_SUFFIX = "_visual"
+QdrantProgressCallback = Callable[[int, int], Awaitable[None]]
 
 
 def visual_collection_name(collection_name: str) -> str:
@@ -88,18 +89,24 @@ class QdrantStoreClient:
         self,
         collection_name: str,
         points: list[models.PointStruct],
+        *,
+        progress_callback: QdrantProgressCallback | None = None,
     ) -> None:
         """Upsert chunk vectors and filter payloads into Qdrant."""
 
         if not points:
             return
         try:
+            completed = 0
             for batch in point_batches(points, getattr(self, "_upsert_batch_size", 128)):
                 await self._client.upsert(
                     collection_name=collection_name,
                     points=batch,
                     wait=False,
                 )
+                completed += len(batch)
+                if progress_callback is not None:
+                    await progress_callback(completed, len(points))
         except UnexpectedResponse as exc:
             response = exc.content.decode("utf-8", errors="replace")
             summary = describe_points(points)
