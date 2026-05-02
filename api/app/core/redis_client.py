@@ -58,6 +58,14 @@ class RedisClient:
 
         await self._client.set(key, value, ex=ttl_seconds)
 
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete cached keys by prefix and return the number removed."""
+
+        deleted = 0
+        async for key in self._client.scan_iter(match=f"{prefix}*"):
+            deleted += await self._client.delete(key)
+        return deleted
+
     async def close(self) -> None:
         """Close the Redis connection pool."""
 

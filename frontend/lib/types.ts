@@ -15,6 +15,10 @@ export interface DocumentItem {
   name: string;
   status: string;
   source_type: string;
+  governance_source_type: string;
+  authority_level: number;
+  review_status: string;
+  current_version: number;
   file_type: string | null;
   file_size: number | null;
   minio_path: string | null;
@@ -25,6 +29,41 @@ export interface DocumentItem {
   metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface DocumentVersionItem {
+  id: string;
+  document_id: string;
+  kb_id: string;
+  version_number: number;
+  name: string;
+  file_type: string | null;
+  file_size: number | null;
+  minio_path: string | null;
+  file_hash: string | null;
+  source_type: string;
+  source_url: string | null;
+  governance_source_type: string;
+  authority_level: number;
+  review_status: string;
+  metadata: Record<string, unknown>;
+  change_summary: string | null;
+  created_by_id: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
+export interface DocumentAuditLogItem {
+  id: number;
+  document_id: string | null;
+  kb_id: string | null;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  action: string;
+  summary: string | null;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface DocumentBatchUploadItem {
@@ -77,6 +116,10 @@ export interface RetrievalResult {
     id: string;
     name: string;
     metadata: Record<string, unknown>;
+    governance_source_type: string;
+    authority_level: number;
+    review_status: string;
+    version: number;
   };
   assets: RetrievalAssetRef[];
 }
@@ -101,6 +144,10 @@ export interface AgentSource {
     id: string;
     name: string;
     metadata: Record<string, unknown>;
+    governance_source_type: string;
+    authority_level: number;
+    review_status: string;
+    version: number;
   };
   content: string;
   score: number;

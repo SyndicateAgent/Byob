@@ -333,7 +333,10 @@ async def call_chat_completion(
                     "from the sources when they help answer the question. If image inputs are "
                     "provided, inspect them and include the corresponding source asset Markdown "
                     "URL when the image is relevant. Cite sources as [S1], [S2]. "
-                    "If the sources are insufficient, say so clearly."
+                    "If sources conflict, prefer lower authority_level numbers because level 1 "
+                    "is the most authoritative and level 5 is raw experience. Mention "
+                    "lower-authority conflicts only as caveats. If the sources are insufficient, "
+                    "say so clearly."
                 ),
             },
             {
@@ -450,7 +453,10 @@ def source_heading(source: AgentSource) -> str:
     page = f", page {source.page_num}" if source.page_num is not None else ""
     return (
         f"[{source.source_id}] document={source.document.name}{page}, "
-        f"chunk_id={source.chunk_id}, score={source.score:.4f}"
+        f"authority_level={source.document.authority_level}, "
+        f"review_status={source.document.review_status}, "
+        f"source_type={source.document.governance_source_type}, "
+        f"version={source.document.version}, chunk_id={source.chunk_id}, score={source.score:.4f}"
     )
 
 
@@ -468,7 +474,8 @@ def build_extract_answer(payload: AgentAskRequest, sources: list[AgentSource], r
         )
     source_lines = [
         f"- [{source.source_id}] `{source.document.name}` - "
-        f"chunk `{source.chunk_id}` - score `{source.score:.4f}`"
+        f"authority L{source.document.authority_level} - "
+        f"{source.document.review_status} - chunk `{source.chunk_id}` - score `{source.score:.4f}`"
         for source in sources
     ]
     answer = (

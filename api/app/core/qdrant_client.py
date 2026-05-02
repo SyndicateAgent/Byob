@@ -62,6 +62,26 @@ class QdrantStoreClient:
             wait=True,
         )
 
+    async def set_payload(
+        self,
+        collection_name: str,
+        point_ids: list[str],
+        payload: dict[str, object],
+    ) -> None:
+        """Update payload fields for existing Qdrant points."""
+
+        if not point_ids:
+            return
+        exists = await self._client.collection_exists(collection_name)
+        if not exists:
+            return
+        await self._client.set_payload(
+            collection_name=collection_name,
+            payload=payload,
+            points=models.PointIdsList(points=point_ids),
+            wait=True,
+        )
+
     async def query_dense(
         self,
         collection_name: str,

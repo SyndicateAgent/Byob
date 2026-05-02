@@ -103,6 +103,8 @@ def test_qdrant_point_payload_excludes_chunk_content() -> None:
     assert "content" not in point.payload
     assert "tenant_id" not in point.payload
     assert point.payload["tags"] == ["manual"]
+    assert point.payload["review_status"] == "published"
+    assert point.payload["authority_level"] == 3
 
 
 async def test_qdrant_delete_points_skips_empty_ids() -> None:
@@ -136,6 +138,10 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
         minio_path="documents/paper.pdf",
         file_hash="hash",
         source_type="upload",
+        governance_source_type="internal_sop",
+        authority_level=3,
+        review_status="published",
+        current_version=1,
         status="completed",
         error_message=None,
         metadata_={},
@@ -184,9 +190,11 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
     async def fake_reset_document_for_reprocess(
         session: AsyncSession,
         selected_document: Document,
+        **kwargs: object,
     ) -> Document:
         calls.append("reset")
         assert selected_document is document
+        assert "actor" in kwargs
         assert qdrant_client.deleted == [("kb_collection", [str(old_point_id)])]
         document.status = "pending"
         document.chunk_count = 0

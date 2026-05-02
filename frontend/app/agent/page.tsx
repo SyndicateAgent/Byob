@@ -14,6 +14,13 @@ import type { AgentAskResponse, KnowledgeBase } from "@/lib/types";
 
 const ALL_KNOWLEDGE_BASES = "__all__";
 
+function reviewStatusVariant(status: string) {
+  if (status === "published") return "success" as const;
+  if (status === "reviewed") return "info" as const;
+  if (status === "deprecated") return "muted" as const;
+  return "warning" as const;
+}
+
 export default function AgentPage() {
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [kbId, setKbId] = useState(ALL_KNOWLEDGE_BASES);
@@ -199,6 +206,8 @@ export default function AgentPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <Badge variant="muted">{source.source_id}</Badge>
+                        <Badge variant={reviewStatusVariant(source.document.review_status)}>{source.document.review_status}</Badge>
+                        <Badge variant="muted">L{source.document.authority_level}</Badge>
                         <span className="truncate text-sm font-medium text-slate-900" title={source.document.name}>
                           {source.document.name}
                         </span>

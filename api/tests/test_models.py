@@ -8,6 +8,8 @@ def test_initial_metadata_contains_phase_one_tables() -> None:
         "users",
         "knowledge_bases",
         "documents",
+        "document_versions",
+        "document_audit_logs",
         "chunks",
         "retrieval_logs",
     }
@@ -22,3 +24,14 @@ def test_chunks_table_keeps_source_content_in_postgres() -> None:
 
     assert "content" in chunks.columns
     assert "qdrant_point_id" in chunks.columns
+
+
+def test_documents_table_contains_governance_columns() -> None:
+    """Documents carry the governance labels used by Agent retrieval."""
+
+    documents = Base.metadata.tables["documents"]
+
+    assert "governance_source_type" in documents.columns
+    assert "authority_level" in documents.columns
+    assert "review_status" in documents.columns
+    assert "current_version" in documents.columns

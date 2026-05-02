@@ -29,6 +29,7 @@ from api.app.schemas.retrieval import (
 from api.app.services.ingestion_service import sparse_vector
 
 RRF_K = 60
+DEFAULT_REVIEW_STATUS = "published"
 ASSET_API_PATH_RE = re.compile(
     r"/api/v1/documents/"
     r"(?P<document_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -68,6 +69,7 @@ async def search(
 
     knowledge_bases = await load_knowledge_bases(session, payload.kb_ids)
     query_filter = build_qdrant_filter(payload.filters)
+    candidate_limit = payload.top_k * candidate_multiplier(payload.filters)
 
     dense_candidates: list[Candidate] = []
     sparse_candidates: list[Candidate] = []
@@ -77,7 +79,7 @@ async def search(
             knowledge_base.qdrant_collection,
             dense_vector,
             query_filter,
-            payload.top_k * 5,
+            candidate_limit,
         )
         dense_candidates.extend(points_to_candidates(dense_points))
     stages["vector_search_ms"] = elapsed_ms(stage_started)
@@ -89,7 +91,7 @@ async def search(
             knowledge_base.qdrant_collection,
             sparse_query,
             query_filter,
-            payload.top_k * 5,
+            candidate_limit,
         )
         sparse_candidates.extend(points_to_candidates(sparse_points))
     stages["sparse_search_ms"] = elapsed_ms(stage_started)
@@ -101,7 +103,7 @@ async def search(
             for candidate in fused
             if candidate.score >= payload.options.score_threshold
         ]
-    fused = fused[: payload.top_k * 5]
+    fused = fused[:candidate_limit]
 
     stage_started = perf_counter()
     chunks = await load_chunks(session, [candidate.chunk_id for candidate in fused])
@@ -115,15 +117,20 @@ async def search(
         for candidate in fused
         if candidate.chunk_id in chunk_by_id
     ]
+    ordered_chunks = filter_chunks_by_governance(
+        ordered_chunks,
+        document_by_id,
+        payload.filters,
+    )
     base_scores = {
         candidate.chunk_id: candidate.score
         for candidate in fused
-        if candidate.chunk_id in chunk_by_id
+        if candidate.chunk_id in {chunk.id for chunk in ordered_chunks}
     }
 
     rerank_scores: list[float] | None = None
     stage_started = perf_counter()
-    if payload.options.enable_rerank:
+    if payload.options.enable_rerank and ordered_chunks:
         rerank_scores = await rerank_client.rerank(
             payload.query,
             [chunk.content for chunk in ordered_chunks],
@@ -145,6 +152,8 @@ async def search(
                 reverse=True,
             )
         ]
+
+    scored_chunks = rank_scored_chunks_by_authority(scored_chunks, base_scores, document_by_id)
 
     results = await build_results(
         session,
@@ -206,7 +215,7 @@ async def load_knowledge_bases(
 
 
 def build_qdrant_filter(filters: dict[str, object]) -> models.Filter:
-    """Build a Qdrant filter from allowed public filters."""
+    """Build a Qdrant filter from stable chunk-level public filters."""
 
     conditions: list[models.Condition] = []
     chunk_type = filters.get("chunk_type")
@@ -228,6 +237,101 @@ def build_qdrant_filter(filters: dict[str, object]) -> models.Filter:
                     )
                 )
     return models.Filter(must=conditions)
+
+
+def candidate_multiplier(filters: dict[str, object]) -> int:
+    """Return a wider candidate window when SQL-level governance filtering applies."""
+
+    if filters.get("include_unpublished") is True and not has_governance_filters(filters):
+        return 5
+    return 20
+
+
+def has_governance_filters(filters: dict[str, object]) -> bool:
+    """Return whether caller requested explicit governance filtering."""
+
+    return any(
+        key in filters
+        for key in (
+            "review_status",
+            "governance_source_type",
+            "authority_level",
+            "max_authority_level",
+        )
+    )
+
+
+def governance_review_status_filter(filters: dict[str, object]) -> str | None:
+    """Return the effective review status filter, defaulting to published only."""
+
+    if filters.get("include_unpublished") is True:
+        return None
+    value = filters.get("review_status", DEFAULT_REVIEW_STATUS)
+    if isinstance(value, str) and value:
+        return value
+    return DEFAULT_REVIEW_STATUS
+
+
+def filter_chunks_by_governance(
+    chunks: list[Chunk],
+    document_by_id: dict[UUID, Document],
+    filters: dict[str, object],
+) -> list[Chunk]:
+    """Apply the same governance rules after SQL hydration as a safety net."""
+
+    return [
+        chunk
+        for chunk in chunks
+        if document_matches_governance_filters(document_by_id[chunk.document_id], filters)
+    ]
+
+
+def document_matches_governance_filters(document: Document, filters: dict[str, object]) -> bool:
+    """Return whether a hydrated document is visible under governance filters."""
+
+    review_status = governance_review_status_filter(filters)
+    if review_status is not None and document.review_status != review_status:
+        return False
+
+    governance_source_type = filters.get("governance_source_type")
+    if (
+        isinstance(governance_source_type, str)
+        and document.governance_source_type != governance_source_type
+    ):
+        return False
+
+    authority_level = filters.get("authority_level")
+    if isinstance(authority_level, int) and document.authority_level != authority_level:
+        return False
+
+    max_authority_level = filters.get("max_authority_level")
+    if isinstance(max_authority_level, int) and document.authority_level > max_authority_level:
+        return False
+
+    return True
+
+
+def rank_scored_chunks_by_authority(
+    scored_chunks: list[tuple[Chunk, float | None]],
+    base_scores: dict[UUID, float],
+    document_by_id: dict[UUID, Document],
+) -> list[tuple[Chunk, float | None]]:
+    """Prefer higher-authority sources before relevance tie-breaking."""
+
+    return sorted(
+        scored_chunks,
+        key=lambda item: (
+            authority_weight(document_by_id[item[0].document_id].authority_level),
+            item[1] if item[1] is not None else base_scores.get(item[0].id, 0.0),
+        ),
+        reverse=True,
+    )
+
+
+def authority_weight(authority_level: int) -> int:
+    """Return a descending weight where level 1 is most authoritative."""
+
+    return max(1, 6 - authority_level)
 
 
 def points_to_candidates(points: list[models.ScoredPoint]) -> list[Candidate]:
@@ -329,6 +433,10 @@ async def build_results(
                     id=document.id,
                     name=document.name,
                     metadata=document.metadata_ if include_metadata else {},
+                    governance_source_type=document.governance_source_type,
+                    authority_level=document.authority_level,
+                    review_status=document.review_status,
+                    version=document.current_version,
                 ),
                 kb_id=chunk.kb_id,
                 chunk_type=chunk.chunk_type,

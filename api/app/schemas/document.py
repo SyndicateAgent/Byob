@@ -4,6 +4,27 @@ from uuid import UUID
 
 from pydantic import AnyUrl, BaseModel, ConfigDict, Field
 
+GovernanceSourceType = Literal[
+    "official_law",
+    "official_guidance",
+    "internal_sop",
+    "expert_summary",
+    "chat_record",
+    "video_transcript",
+    "other",
+]
+ReviewStatus = Literal["draft", "reviewed", "published", "deprecated"]
+
+
+class DocumentGovernanceInput(BaseModel):
+    """Required governance labels for newly imported documents."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    governance_source_type: GovernanceSourceType
+    authority_level: int = Field(ge=1, le=5)
+    review_status: ReviewStatus
+
 
 class DocumentTextCreateRequest(BaseModel):
     """Input for directly uploading plaintext or markdown content."""
@@ -13,6 +34,9 @@ class DocumentTextCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1)
     file_type: str = Field(default="txt", pattern="^(txt|md|markdown)$")
+    governance_source_type: GovernanceSourceType
+    authority_level: int = Field(ge=1, le=5)
+    review_status: ReviewStatus
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -23,7 +47,21 @@ class DocumentUrlCreateRequest(BaseModel):
 
     name: str | None = Field(default=None, max_length=500)
     url: AnyUrl
+    governance_source_type: GovernanceSourceType
+    authority_level: int = Field(ge=1, le=5)
+    review_status: ReviewStatus
     metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class DocumentGovernanceUpdateRequest(BaseModel):
+    """Governance update that creates a new document version snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    governance_source_type: GovernanceSourceType | None = None
+    authority_level: int | None = Field(default=None, ge=1, le=5)
+    review_status: ReviewStatus | None = None
+    change_summary: str | None = Field(default=None, max_length=1000)
 
 
 class DocumentResponse(BaseModel):
@@ -40,6 +78,10 @@ class DocumentResponse(BaseModel):
     file_hash: str | None
     source_type: str
     source_url: str | None
+    governance_source_type: str
+    authority_level: int
+    review_status: str
+    current_version: int
     status: str
     error_message: str | None
     metadata: dict[str, object] = Field(alias="metadata_")
@@ -55,6 +97,67 @@ class DocumentListResponse(BaseModel):
 
     request_id: str
     data: list[DocumentResponse]
+
+
+class DocumentVersionResponse(BaseModel):
+    """Immutable snapshot of a document version."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    id: UUID
+    document_id: UUID
+    kb_id: UUID
+    version_number: int
+    name: str
+    file_type: str | None
+    file_size: int | None
+    minio_path: str | None
+    file_hash: str | None
+    source_type: str
+    source_url: str | None
+    governance_source_type: str
+    authority_level: int
+    review_status: str
+    metadata: dict[str, object] = Field(alias="metadata_")
+    change_summary: str | None
+    created_by_id: UUID | None
+    created_by_email: str | None
+    created_at: datetime
+
+
+class DocumentVersionListResponse(BaseModel):
+    """List response for document version history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    data: list[DocumentVersionResponse]
+
+
+class DocumentAuditLogResponse(BaseModel):
+    """One append-only document audit entry."""
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    id: int
+    document_id: UUID | None
+    kb_id: UUID | None
+    actor_user_id: UUID | None
+    actor_email: str | None
+    action: str
+    summary: str | None
+    before: dict[str, object]
+    after: dict[str, object]
+    created_at: datetime
+
+
+class DocumentAuditLogListResponse(BaseModel):
+    """List response for document audit history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    data: list[DocumentAuditLogResponse]
 
 
 class DocumentBatchUploadItem(BaseModel):

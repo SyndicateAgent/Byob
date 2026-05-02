@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import BigInteger, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,6 +14,8 @@ class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
         Index("idx_documents_kb_status", "kb_id", "status"),
+        Index("idx_documents_kb_review_status", "kb_id", "review_status"),
+        Index("idx_documents_kb_authority", "kb_id", "authority_level"),
         Index("idx_documents_kb_name", "kb_id", "name"),
         Index("idx_documents_kb_file_hash", "kb_id", "file_hash"),
         Index("idx_documents_metadata", "metadata", postgresql_using="gin"),
@@ -28,6 +30,14 @@ class Document(Base):
     file_hash: Mapped[str | None] = mapped_column(String(64))
     source_type: Mapped[str] = mapped_column(String(50), server_default="upload")
     source_url: Mapped[str | None] = mapped_column(Text)
+    governance_source_type: Mapped[str] = mapped_column(
+        String(50), default="internal_sop", server_default="internal_sop"
+    )
+    authority_level: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    review_status: Mapped[str] = mapped_column(
+        String(20), default="draft", server_default="draft"
+    )
+    current_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     status: Mapped[str] = status_column("pending")
     error_message: Mapped[str | None] = mapped_column(Text)
     metadata_: Mapped[dict[str, object]] = mapped_column("metadata", JSONB, server_default="{}")

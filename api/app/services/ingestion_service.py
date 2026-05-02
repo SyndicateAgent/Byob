@@ -22,6 +22,7 @@ from api.app.models.document import Document
 from api.app.models.document_asset import DocumentAsset
 from api.app.models.knowledge_base import KnowledgeBase
 from api.app.services.document_service import (
+    document_governance_payload,
     list_document_qdrant_point_ids,
     metadata_with_ingestion_progress,
     refresh_knowledge_base_counts,
@@ -172,6 +173,7 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                         chunk,
                         dense_vector=embeddings[index],
                         created_at=document.created_at.isoformat(),
+                        document=document,
                     )
                 )
 
@@ -505,6 +507,7 @@ def build_qdrant_point(
     *,
     dense_vector: list[float],
     created_at: str,
+    document: Document | None = None,
 ) -> models.PointStruct:
     """Build a Qdrant point with dense and sparse vectors and no source content."""
 
@@ -520,6 +523,16 @@ def build_qdrant_point(
             "chunk_type": chunk.chunk_type,
             "tags": chunk.metadata_.get("tags", []),
             "created_at": created_at,
+            **(
+                document_governance_payload(document)
+                if document is not None
+                else {
+                    "governance_source_type": "internal_sop",
+                    "authority_level": 3,
+                    "review_status": "published",
+                    "document_version": 1,
+                }
+            ),
         },
     )
 

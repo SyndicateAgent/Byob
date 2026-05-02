@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,29 +12,40 @@ from api.app.schemas.document import (
     ChunkResponse,
     DocumentAssetListResponse,
     DocumentAssetResponse,
+    DocumentAuditLogListResponse,
     DocumentBatchUploadItem,
     DocumentBatchUploadResponse,
     DocumentContentResponse,
+    DocumentGovernanceInput,
+    DocumentGovernanceUpdateRequest,
     DocumentListResponse,
     DocumentResponse,
     DocumentTextCreateRequest,
     DocumentUrlCreateRequest,
+    DocumentVersionListResponse,
+    GovernanceSourceType,
+    ReviewStatus,
 )
 from api.app.services.document_service import (
+    AuditActor,
     create_file_document,
     create_text_document,
     create_url_document,
     delete_document,
+    document_governance_payload,
     find_duplicate_document,
     get_document,
     get_document_asset,
     hash_content,
     list_chunks,
     list_document_assets,
+    list_document_audit_logs,
     list_document_qdrant_point_ids,
+    list_document_versions,
     list_documents,
     parsed_content_metadata,
     reset_document_for_reprocess,
+    update_document_governance,
 )
 from api.app.services.knowledge_base_service import get_knowledge_base
 from workers.tasks.document_tasks import process_document
@@ -45,6 +56,9 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 AssetUserDep = Annotated[CurrentUser, Depends(get_current_user_or_query_token)]
 UploadFileField = Annotated[UploadFile, File()]
 BatchUploadFilesField = Annotated[list[UploadFile], File()]
+GovernanceSourceTypeField = Annotated[GovernanceSourceType, Form()]
+AuthorityLevelField = Annotated[int, Form(ge=1, le=5)]
+ReviewStatusField = Annotated[ReviewStatus, Form()]
 BatchSkipReason = Literal["duplicate_name", "duplicate_file_hash", "empty_file"]
 
 
@@ -52,6 +66,35 @@ def enqueue_document(document_id: UUID) -> None:
     """Queue asynchronous document processing."""
 
     process_document.delay(str(document_id))
+
+
+def current_actor(current_user: CurrentUser) -> AuditActor:
+    """Return the current user identity for version and audit records."""
+
+    return AuditActor(user_id=current_user.id, email=current_user.email)
+
+
+def governance_input(
+    governance_source_type: GovernanceSourceType,
+    authority_level: int,
+    review_status: ReviewStatus,
+) -> DocumentGovernanceInput:
+    """Build the required governance labels for multipart imports."""
+
+    return DocumentGovernanceInput(
+        governance_source_type=governance_source_type,
+        authority_level=authority_level,
+        review_status=review_status,
+    )
+
+
+async def clear_retrieval_cache(request: Request) -> None:
+    """Invalidate retrieval cache after document content or governance changes."""
+
+    redis_client = getattr(request.app.state, "redis_client", None)
+    if redis_client is None or not hasattr(redis_client, "delete_prefix"):
+        return
+    await redis_client.delete_prefix("retrieval:")
 
 
 def skipped_upload_item(
@@ -88,6 +131,9 @@ async def upload_document_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
     file: UploadFileField,
+    governance_source_type: GovernanceSourceTypeField,
+    authority_level: AuthorityLevelField,
+    review_status: ReviewStatusField,
 ) -> DocumentResponse:
     """Upload a file document and enqueue ingestion."""
 
@@ -131,8 +177,11 @@ async def upload_document_endpoint(
         file_size=len(content),
         minio_path=object_key,
         file_hash=file_hash,
+        governance=governance_input(governance_source_type, authority_level, review_status),
+        actor=current_actor(current_user),
     )
     enqueue_document(document.id)
+    await clear_retrieval_cache(request)
     return DocumentResponse.model_validate(document)
 
 
@@ -148,6 +197,9 @@ async def upload_documents_batch_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
     files: BatchUploadFilesField,
+    governance_source_type: GovernanceSourceTypeField,
+    authority_level: AuthorityLevelField,
+    review_status: ReviewStatusField,
 ) -> DocumentBatchUploadResponse:
     """Upload multiple file documents and skip duplicates by name or content hash."""
 
@@ -203,6 +255,8 @@ async def upload_documents_batch_endpoint(
             file_size=len(content),
             minio_path=object_key,
             file_hash=file_hash,
+            governance=governance_input(governance_source_type, authority_level, review_status),
+            actor=current_actor(current_user),
         )
         enqueue_document(document.id)
         items.append(
@@ -217,6 +271,8 @@ async def upload_documents_batch_endpoint(
     skipped_count = len(items) - created_count
     if created_count == 0:
         response.status_code = status.HTTP_200_OK
+    else:
+        await clear_retrieval_cache(request)
     return DocumentBatchUploadResponse(
         request_id=request.state.request_id,
         created_count=created_count,
@@ -233,6 +289,7 @@ async def upload_documents_batch_endpoint(
 async def upload_text_document_endpoint(
     kb_id: UUID,
     payload: DocumentTextCreateRequest,
+    request: Request,
     response: Response,
     current_user: CurrentUserDep,
     session: DbSession,
@@ -255,8 +312,14 @@ async def upload_text_document_endpoint(
         response.status_code = status.HTTP_200_OK
         return DocumentResponse.model_validate(duplicate.document)
 
-    document = await create_text_document(session, knowledge_base, payload)
+    document = await create_text_document(
+        session,
+        knowledge_base,
+        payload,
+        actor=current_actor(current_user),
+    )
     enqueue_document(document.id)
+    await clear_retrieval_cache(request)
     return DocumentResponse.model_validate(document)
 
 
@@ -268,6 +331,7 @@ async def upload_text_document_endpoint(
 async def upload_url_document_endpoint(
     kb_id: UUID,
     payload: DocumentUrlCreateRequest,
+    request: Request,
     response: Response,
     current_user: CurrentUserDep,
     session: DbSession,
@@ -291,8 +355,14 @@ async def upload_url_document_endpoint(
         response.status_code = status.HTTP_200_OK
         return DocumentResponse.model_validate(duplicate.document)
 
-    document = await create_url_document(session, knowledge_base, payload)
+    document = await create_url_document(
+        session,
+        knowledge_base,
+        payload,
+        actor=current_actor(current_user),
+    )
     enqueue_document(document.id)
+    await clear_retrieval_cache(request)
     return DocumentResponse.model_validate(document)
 
 
@@ -330,6 +400,80 @@ async def get_document_endpoint(
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return DocumentResponse.model_validate(document)
+
+
+@router.patch("/documents/{document_id}/governance", response_model=DocumentResponse)
+async def update_document_governance_endpoint(
+    document_id: UUID,
+    payload: DocumentGovernanceUpdateRequest,
+    request: Request,
+    current_user: CurrentUserDep,
+    session: DbSession,
+) -> DocumentResponse:
+    """Update document governance fields and sync filter payloads."""
+
+    document = await get_document(session, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    knowledge_base = await get_knowledge_base(session, document.kb_id)
+    if knowledge_base is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+
+    updated_document = await update_document_governance(
+        session,
+        document,
+        payload,
+        actor=current_actor(current_user),
+    )
+    point_ids = await list_document_qdrant_point_ids(session, updated_document)
+    await request.app.state.qdrant_client.set_payload(
+        knowledge_base.qdrant_collection,
+        point_ids,
+        document_governance_payload(updated_document),
+    )
+    await clear_retrieval_cache(request)
+    return DocumentResponse.model_validate(updated_document)
+
+
+@router.get("/documents/{document_id}/versions", response_model=DocumentVersionListResponse)
+async def list_document_versions_endpoint(
+    document_id: UUID,
+    request: Request,
+    current_user: CurrentUserDep,
+    session: DbSession,
+) -> DocumentVersionListResponse:
+    """Return document version history."""
+
+    document = await get_document(session, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    versions = await list_document_versions(session, document)
+    return DocumentVersionListResponse(
+        request_id=request.state.request_id,
+        data=versions,
+    )
+
+
+@router.get("/documents/{document_id}/audit-logs", response_model=DocumentAuditLogListResponse)
+async def list_document_audit_logs_endpoint(
+    document_id: UUID,
+    request: Request,
+    current_user: CurrentUserDep,
+    session: DbSession,
+) -> DocumentAuditLogListResponse:
+    """Return document audit log entries."""
+
+    document = await get_document(session, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    audit_logs = await list_document_audit_logs(session, document)
+    return DocumentAuditLogListResponse(
+        request_id=request.state.request_id,
+        data=audit_logs,
+    )
 
 
 @router.get("/documents/{document_id}/chunks", response_model=ChunkListResponse)
@@ -452,7 +596,8 @@ async def delete_document_endpoint(
         knowledge_base.qdrant_collection,
         point_ids,
     )
-    await delete_document(session, document)
+    await delete_document(session, document, actor=current_actor(current_user))
+    await clear_retrieval_cache(request)
 
 
 @router.post("/documents/{document_id}/reprocess", response_model=DocumentResponse)
@@ -478,6 +623,11 @@ async def reprocess_document_endpoint(
         knowledge_base.qdrant_collection,
         point_ids,
     )
-    reset_document = await reset_document_for_reprocess(session, document)
+    reset_document = await reset_document_for_reprocess(
+        session,
+        document,
+        actor=current_actor(current_user),
+    )
     enqueue_document(reset_document.id)
+    await clear_retrieval_cache(request)
     return DocumentResponse.model_validate(reset_document)

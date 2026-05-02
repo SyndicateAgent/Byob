@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, CircleAlert, Clock3, Copy, FileText, FileUp, RefreshCcw, Trash2, Type, Upload } from "lucide-react";
+import { CheckCircle2, CircleAlert, Clock3, Copy, FileText, FileUp, History, RefreshCcw, ShieldCheck, Trash2, Type, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DocumentContentViewer } from "@/components/document-content-viewer";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { ApiError, apiRequest } from "@/lib/api";
 import { mergeChunkContent } from "@/lib/chunk-overlap";
 import { formatDate, formatNumber, statusVariant } from "@/lib/utils";
-import type { ChunkItem, DocumentBatchUploadResponse, DocumentContent, DocumentItem, KnowledgeBase } from "@/lib/types";
+import type { ChunkItem, DocumentAuditLogItem, DocumentBatchUploadResponse, DocumentContent, DocumentItem, DocumentVersionItem, KnowledgeBase } from "@/lib/types";
 
 type UploadMode = "text" | "files" | null;
 type IngestionProgress = {
@@ -31,6 +31,21 @@ type IngestionProgress = {
 
 const ACTIVE_DOCUMENT_STATUSES = new Set(["pending", "processing"]);
 const DOCUMENT_PROGRESS_STORAGE_KEY = "byob_document_progress";
+const GOVERNANCE_SOURCE_OPTIONS = [
+  { value: "official_law", label: "Official law", level: "L1" },
+  { value: "official_guidance", label: "Official guidance", level: "L2" },
+  { value: "internal_sop", label: "Internal SOP", level: "L3" },
+  { value: "expert_summary", label: "Reviewed expert summary", level: "L4" },
+  { value: "chat_record", label: "Chat record", level: "L5" },
+  { value: "video_transcript", label: "Video transcript", level: "L5" },
+  { value: "other", label: "Other", level: "L5" },
+] as const;
+const REVIEW_STATUS_OPTIONS = [
+  { value: "draft", label: "Draft" },
+  { value: "reviewed", label: "Reviewed" },
+  { value: "published", label: "Published" },
+  { value: "deprecated", label: "Deprecated" },
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -84,6 +99,28 @@ function writeStoredProgress(progressByRun: Record<string, number>) {
 
 function isActiveDocument(document: DocumentItem) {
   return ACTIVE_DOCUMENT_STATUSES.has(document.status.toLowerCase());
+}
+
+function governanceSourceLabel(value: string) {
+  return GOVERNANCE_SOURCE_OPTIONS.find((option) => option.value === value)?.label ?? value;
+}
+
+function reviewStatusVariant(status: string) {
+  if (status === "published") return "success" as const;
+  if (status === "reviewed") return "info" as const;
+  if (status === "deprecated") return "muted" as const;
+  return "warning" as const;
+}
+
+function authorityLabel(level: number) {
+  const labels: Record<number, string> = {
+    1: "L1 official",
+    2: "L2 authoritative",
+    3: "L3 SOP",
+    4: "L4 reviewed",
+    5: "L5 raw",
+  };
+  return labels[level] ?? `L${level}`;
 }
 
 function documentProgress(document: DocumentItem, optimisticValue: number | undefined) {
@@ -147,6 +184,9 @@ export default function DocumentsPage() {
   const [content, setContent] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
+  const [governanceSourceType, setGovernanceSourceType] = useState("");
+  const [authorityLevel, setAuthorityLevel] = useState("");
+  const [reviewStatus, setReviewStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<string | null>(null);
   const [uploading, setUploading] = useState<UploadMode>(null);
@@ -159,6 +199,19 @@ export default function DocumentsPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewCopied, setPreviewCopied] = useState(false);
+  const [governanceDocument, setGovernanceDocument] = useState<DocumentItem | null>(null);
+  const [governanceForm, setGovernanceForm] = useState({
+    governance_source_type: "",
+    authority_level: "",
+    review_status: "",
+    change_summary: "",
+  });
+  const [versions, setVersions] = useState<DocumentVersionItem[]>([]);
+  const [auditLogs, setAuditLogs] = useState<DocumentAuditLogItem[]>([]);
+  const [governanceLoading, setGovernanceLoading] = useState(false);
+  const [governanceError, setGovernanceError] = useState<string | null>(null);
+
+  const governanceReady = Boolean(governanceSourceType && authorityLevel && reviewStatus);
 
   async function loadKnowledgeBases() {
     const response = await apiRequest<{ data: KnowledgeBase[] }>("/api/v1/knowledge-bases");
@@ -241,7 +294,14 @@ export default function DocumentsPage() {
     try {
       const document = await apiRequest<DocumentItem>(`/api/v1/knowledge-bases/${kbId}/documents/text`, {
         method: "POST",
-        body: JSON.stringify({ name, content, file_type: "txt" }),
+        body: JSON.stringify({
+          name,
+          content,
+          file_type: "txt",
+          governance_source_type: governanceSourceType,
+          authority_level: Number(authorityLevel),
+          review_status: reviewStatus,
+        }),
       });
       setProgressByRun((current) => ({ ...current, [documentProgressKey(document)]: 22 }));
       setUploadProgress(100);
@@ -269,6 +329,9 @@ export default function DocumentsPage() {
       for (const selectedFile of files) {
         formData.append("files", selectedFile);
       }
+      formData.append("governance_source_type", governanceSourceType);
+      formData.append("authority_level", authorityLevel);
+      formData.append("review_status", reviewStatus);
       const response = await apiRequest<DocumentBatchUploadResponse>(`/api/v1/knowledge-bases/${kbId}/documents/batch`, {
         method: "POST",
         body: formData,
@@ -365,6 +428,58 @@ export default function DocumentsPage() {
     }
   }
 
+  async function openGovernance(document: DocumentItem) {
+    setGovernanceDocument(document);
+    setGovernanceForm({
+      governance_source_type: document.governance_source_type,
+      authority_level: String(document.authority_level),
+      review_status: document.review_status,
+      change_summary: "",
+    });
+    setVersions([]);
+    setAuditLogs([]);
+    setGovernanceError(null);
+    setGovernanceLoading(true);
+    try {
+      const [versionResponse, auditResponse] = await Promise.all([
+        apiRequest<{ data: DocumentVersionItem[] }>(`/api/v1/documents/${document.id}/versions`),
+        apiRequest<{ data: DocumentAuditLogItem[] }>(`/api/v1/documents/${document.id}/audit-logs`),
+      ]);
+      setVersions(versionResponse.data);
+      setAuditLogs(auditResponse.data);
+    } catch (err) {
+      setGovernanceError(err instanceof Error ? err.message : "Load governance history failed");
+    } finally {
+      setGovernanceLoading(false);
+    }
+  }
+
+  async function updateGovernance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!governanceDocument) return;
+    setGovernanceError(null);
+    setGovernanceLoading(true);
+    try {
+      const updated = await apiRequest<DocumentItem>(`/api/v1/documents/${governanceDocument.id}/governance`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          governance_source_type: governanceForm.governance_source_type,
+          authority_level: Number(governanceForm.authority_level),
+          review_status: governanceForm.review_status,
+          change_summary: governanceForm.change_summary || null,
+        }),
+      });
+      setGovernanceDocument(updated);
+      setGovernanceForm((current) => ({ ...current, change_summary: "" }));
+      await loadDocuments();
+      await openGovernance(updated);
+    } catch (err) {
+      setGovernanceError(err instanceof Error ? err.message : "Update governance failed");
+    } finally {
+      setGovernanceLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -449,7 +564,15 @@ export default function DocumentsPage() {
               placeholder="Content"
               required
             />
-            <Button type="submit" disabled={!kbId || uploading !== null} className="gap-2">
+            <GovernanceFields
+              sourceType={governanceSourceType}
+              authorityLevel={authorityLevel}
+              reviewStatus={reviewStatus}
+              onSourceTypeChange={setGovernanceSourceType}
+              onAuthorityLevelChange={setAuthorityLevel}
+              onReviewStatusChange={setReviewStatus}
+            />
+            <Button type="submit" disabled={!kbId || uploading !== null || !governanceReady} className="gap-2">
               <Upload className="h-4 w-4" /> {uploading === "text" ? "Queueing..." : "Upload text"}
             </Button>
           </form>
@@ -480,7 +603,15 @@ export default function DocumentsPage() {
                 {formatNumber(files.length)} selected
               </p>
             )}
-            <Button type="submit" disabled={!kbId || files.length === 0 || uploading !== null} className="gap-2">
+            <GovernanceFields
+              sourceType={governanceSourceType}
+              authorityLevel={authorityLevel}
+              reviewStatus={reviewStatus}
+              onSourceTypeChange={setGovernanceSourceType}
+              onAuthorityLevelChange={setAuthorityLevel}
+              onReviewStatusChange={setReviewStatus}
+            />
+            <Button type="submit" disabled={!kbId || files.length === 0 || uploading !== null || !governanceReady} className="gap-2">
               <Upload className="h-4 w-4" /> {uploading === "files" ? "Queueing..." : "Import files"}
             </Button>
           </form>
@@ -499,6 +630,7 @@ export default function DocumentsPage() {
             <TR>
               <TH>Name</TH>
               <TH>Source</TH>
+              <TH>Governance</TH>
               <TH>Status</TH>
               <TH>Embedding progress</TH>
               <TH className="text-right">Chunks</TH>
@@ -535,6 +667,15 @@ export default function DocumentsPage() {
                     {document.source_type} / {document.file_type ?? "-"}
                   </TD>
                   <TD>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex flex-wrap gap-1.5">
+                        <Badge variant={reviewStatusVariant(document.review_status)}>{document.review_status}</Badge>
+                        <Badge variant="muted">{authorityLabel(document.authority_level)}</Badge>
+                      </div>
+                      <span className="text-xs text-slate-500">{governanceSourceLabel(document.governance_source_type)} · v{document.current_version}</span>
+                    </div>
+                  </TD>
+                  <TD>
                     <Badge variant={statusVariant(document.status)}>{document.status}</Badge>
                   </TD>
                   <TD className="min-w-56">
@@ -561,6 +702,14 @@ export default function DocumentsPage() {
                       <Button
                         type="button"
                         variant="outline"
+                        onClick={() => openGovernance(document)}
+                        title="Governance"
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
                         onClick={() => reprocessDocument(document.id)}
                         title="Reprocess"
                       >
@@ -581,7 +730,7 @@ export default function DocumentsPage() {
             })}
             {documents.length === 0 && (
               <TR>
-                <TD colSpan={7} className="text-center text-sm text-slate-500">
+                <TD colSpan={8} className="text-center text-sm text-slate-500">
                   {kbId ? "No documents yet." : "Select a knowledge base to view documents."}
                 </TD>
               </TR>
@@ -606,6 +755,8 @@ export default function DocumentsPage() {
                 <Badge variant={previewContentSource === "parsed" ? "success" : "warning"}>
                   {previewContentSource === "parsed" ? "Parsed snapshot" : "Chunk fallback"}
                 </Badge>
+                <Badge variant={reviewStatusVariant(previewDocument.review_status)}>{previewDocument.review_status}</Badge>
+                <Badge variant="muted">{authorityLabel(previewDocument.authority_level)}</Badge>
                 <span className="text-xs text-slate-500">Created {formatDate(previewDocument.created_at)}</span>
               </div>
               <Button
@@ -647,6 +798,149 @@ export default function DocumentsPage() {
           )}
         </div>
       </Modal>
+
+      <Modal
+        open={governanceDocument !== null}
+        onClose={() => setGovernanceDocument(null)}
+        title={governanceDocument ? `Governance - ${governanceDocument.name}` : "Governance"}
+        description="Control which sources can enter formal Agent retrieval and keep an audit trail."
+        className="max-h-[88vh] max-w-5xl overflow-hidden"
+      >
+        <div className="grid max-h-[calc(88vh-8rem)] gap-5 overflow-auto lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+          <form className="space-y-4" onSubmit={updateGovernance}>
+            <GovernanceFields
+              sourceType={governanceForm.governance_source_type}
+              authorityLevel={governanceForm.authority_level}
+              reviewStatus={governanceForm.review_status}
+              onSourceTypeChange={(value) => setGovernanceForm((current) => ({ ...current, governance_source_type: value }))}
+              onAuthorityLevelChange={(value) => setGovernanceForm((current) => ({ ...current, authority_level: value }))}
+              onReviewStatusChange={(value) => setGovernanceForm((current) => ({ ...current, review_status: value }))}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="governance-summary">Change summary</Label>
+              <Textarea
+                id="governance-summary"
+                value={governanceForm.change_summary}
+                onChange={(event) => setGovernanceForm((current) => ({ ...current, change_summary: event.target.value }))}
+                placeholder="Why this label changed"
+              />
+            </div>
+            {governanceError && <p className="rounded bg-red-50 p-3 text-sm text-red-700">{governanceError}</p>}
+            <Button
+              type="submit"
+              disabled={
+                governanceLoading ||
+                !governanceForm.governance_source_type ||
+                !governanceForm.authority_level ||
+                !governanceForm.review_status
+              }
+              className="gap-2"
+            >
+              <ShieldCheck className="h-4 w-4" /> {governanceLoading ? "Saving..." : "Save governance"}
+            </Button>
+          </form>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <History className="h-4 w-4 text-slate-500" />
+                <p className="font-medium text-slate-900">Version history</p>
+              </div>
+              <div className="space-y-2">
+                {versions.map((version) => (
+                  <div key={version.id} className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="muted">v{version.version_number}</Badge>
+                      <Badge variant={reviewStatusVariant(version.review_status)}>{version.review_status}</Badge>
+                      <Badge variant="muted">{authorityLabel(version.authority_level)}</Badge>
+                    </div>
+                    <p className="mt-2 text-slate-700">{version.change_summary ?? "No summary"}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {governanceSourceLabel(version.governance_source_type)} · {version.created_by_email ?? "system"} · {formatDate(version.created_at)}
+                    </p>
+                  </div>
+                ))}
+                {!governanceLoading && versions.length === 0 && (
+                  <p className="text-sm text-slate-500">No versions recorded yet.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
+              <p className="mb-3 font-medium text-slate-900">Audit log</p>
+              <div className="space-y-2">
+                {auditLogs.map((entry) => (
+                  <div key={entry.id} className="rounded-md border border-slate-200 p-3 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Badge variant="info">{entry.action}</Badge>
+                      <span className="text-xs text-slate-500">{formatDate(entry.created_at)}</span>
+                    </div>
+                    <p className="mt-2 text-slate-700">{entry.summary ?? "No summary"}</p>
+                    <p className="mt-1 text-xs text-slate-500">Actor: {entry.actor_email ?? "system"}</p>
+                  </div>
+                ))}
+                {!governanceLoading && auditLogs.length === 0 && (
+                  <p className="text-sm text-slate-500">No audit entries recorded yet.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function GovernanceFields({
+  sourceType,
+  authorityLevel,
+  reviewStatus,
+  onSourceTypeChange,
+  onAuthorityLevelChange,
+  onReviewStatusChange,
+}: {
+  sourceType: string;
+  authorityLevel: string;
+  reviewStatus: string;
+  onSourceTypeChange: (value: string) => void;
+  onAuthorityLevelChange: (value: string) => void;
+  onReviewStatusChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      <div className="space-y-1">
+        <Label>Source type</Label>
+        <Select value={sourceType} onChange={(event) => onSourceTypeChange(event.target.value)} required>
+          <option value="">Select source</option>
+          {GOVERNANCE_SOURCE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.level} · {option.label}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className="space-y-1">
+        <Label>Authority</Label>
+        <Select value={authorityLevel} onChange={(event) => onAuthorityLevelChange(event.target.value)} required>
+          <option value="">Select level</option>
+          {[1, 2, 3, 4, 5].map((level) => (
+            <option key={level} value={String(level)}>
+              {authorityLabel(level)}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <div className="space-y-1">
+        <Label>Review status</Label>
+        <Select value={reviewStatus} onChange={(event) => onReviewStatusChange(event.target.value)} required>
+          <option value="">Select status</option>
+          {REVIEW_STATUS_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+      </div>
     </div>
   );
 }

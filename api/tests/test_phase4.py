@@ -5,10 +5,14 @@ from qdrant_client.http import models
 from api.app.api.v1.retrieval import build_cache_key
 from api.app.config import Settings
 from api.app.main import create_app
+from api.app.models.chunk import Chunk
+from api.app.models.document import Document
 from api.app.schemas.retrieval import RetrievalRequest
 from api.app.services.retrieval_service import (
     Candidate,
     build_qdrant_filter,
+    document_matches_governance_filters,
+    rank_scored_chunks_by_authority,
     referenced_asset_keys,
     rrf_fuse,
 )
@@ -49,6 +53,47 @@ def test_qdrant_filter_includes_allowed_metadata_filters() -> None:
     assert isinstance(query_filter.must, list)
     assert len(query_filter.must) == 2
     assert all(isinstance(condition, models.FieldCondition) for condition in query_filter.must)
+
+
+def test_retrieval_governance_defaults_to_published_documents() -> None:
+    """Retrieval hides draft/reviewed documents unless explicitly included."""
+
+    published = Document(id=uuid4(), kb_id=uuid4(), name="published", review_status="published")
+    draft = Document(id=uuid4(), kb_id=published.kb_id, name="draft", review_status="draft")
+
+    assert document_matches_governance_filters(published, {})
+    assert not document_matches_governance_filters(draft, {})
+    assert document_matches_governance_filters(draft, {"include_unpublished": True})
+
+
+def test_authority_ranking_prefers_lower_authority_levels() -> None:
+    """Official sources rank ahead of lower-authority experience when both match."""
+
+    kb_id = uuid4()
+    official_doc = Document(id=uuid4(), kb_id=kb_id, name="law", authority_level=1)
+    raw_doc = Document(id=uuid4(), kb_id=kb_id, name="chat", authority_level=5)
+    official_chunk = Chunk(
+        id=uuid4(),
+        document_id=official_doc.id,
+        kb_id=kb_id,
+        content="law",
+        chunk_index=0,
+    )
+    raw_chunk = Chunk(
+        id=uuid4(),
+        document_id=raw_doc.id,
+        kb_id=kb_id,
+        content="chat",
+        chunk_index=1,
+    )
+
+    ranked = rank_scored_chunks_by_authority(
+        [(raw_chunk, 0.99), (official_chunk, 0.2)],
+        {raw_chunk.id: 0.99, official_chunk.id: 0.2},
+        {official_doc.id: official_doc, raw_doc.id: raw_doc},
+    )
+
+    assert ranked[0][0] is official_chunk
 
 
 def test_retrieval_cache_key_is_payload_scoped() -> None:

@@ -10,8 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.app.models.chunk import Chunk
 from api.app.models.document import Document
 from api.app.models.document_asset import DocumentAsset
+from api.app.models.document_audit_log import DocumentAuditLog
+from api.app.models.document_version import DocumentVersion
 from api.app.models.knowledge_base import KnowledgeBase
-from api.app.schemas.document import DocumentTextCreateRequest, DocumentUrlCreateRequest
+from api.app.schemas.document import (
+    DocumentGovernanceInput,
+    DocumentGovernanceUpdateRequest,
+    DocumentTextCreateRequest,
+    DocumentUrlCreateRequest,
+)
 
 DuplicateDocumentReason = Literal["duplicate_name", "duplicate_file_hash"]
 
@@ -22,6 +29,14 @@ class DuplicateDocumentMatch:
 
     document: Document
     reason: DuplicateDocumentReason
+
+
+@dataclass(frozen=True)
+class AuditActor:
+    """User identity stored with version and audit records."""
+
+    user_id: UUID | None = None
+    email: str | None = None
 
 
 def metadata_with_ingestion_progress(
@@ -70,7 +85,9 @@ async def create_file_document(
     file_size: int,
     minio_path: str,
     file_hash: str,
+    governance: DocumentGovernanceInput,
     metadata: dict[str, object] | None = None,
+    actor: AuditActor | None = None,
 ) -> Document:
     """Create a document record for an uploaded object."""
 
@@ -82,6 +99,9 @@ async def create_file_document(
         minio_path=minio_path,
         file_hash=file_hash,
         source_type="upload",
+        governance_source_type=governance.governance_source_type,
+        authority_level=governance.authority_level,
+        review_status=governance.review_status,
         metadata_=metadata_with_ingestion_progress(
             metadata,
             stage="queued",
@@ -93,6 +113,23 @@ async def create_file_document(
     )
     session.add(document)
     knowledge_base.document_count += 1
+    await session.flush()
+    await record_document_version(
+        session,
+        document,
+        version_number=1,
+        change_summary="Initial uploaded document",
+        actor=actor,
+    )
+    record_document_audit_log(
+        session,
+        document=document,
+        action="document.created",
+        summary="Uploaded document created",
+        before={},
+        after=document_snapshot(document),
+        actor=actor,
+    )
     await session.commit()
     await session.refresh(document)
     return document
@@ -129,6 +166,8 @@ async def create_text_document(
     session: AsyncSession,
     knowledge_base: KnowledgeBase,
     payload: DocumentTextCreateRequest,
+    *,
+    actor: AuditActor | None = None,
 ) -> Document:
     """Create a document record for direct text ingestion."""
 
@@ -140,6 +179,9 @@ async def create_text_document(
         file_size=len(encoded),
         file_hash=hash_content(encoded),
         source_type="text",
+        governance_source_type=payload.governance_source_type,
+        authority_level=payload.authority_level,
+        review_status=payload.review_status,
         metadata_=metadata_with_ingestion_progress(
             {**payload.metadata, "inline_content": payload.content},
             stage="queued",
@@ -151,6 +193,23 @@ async def create_text_document(
     )
     session.add(document)
     knowledge_base.document_count += 1
+    await session.flush()
+    await record_document_version(
+        session,
+        document,
+        version_number=1,
+        change_summary="Initial text document",
+        actor=actor,
+    )
+    record_document_audit_log(
+        session,
+        document=document,
+        action="document.created",
+        summary="Text document created",
+        before={},
+        after=document_snapshot(document),
+        actor=actor,
+    )
     await session.commit()
     await session.refresh(document)
     return document
@@ -160,6 +219,8 @@ async def create_url_document(
     session: AsyncSession,
     knowledge_base: KnowledgeBase,
     payload: DocumentUrlCreateRequest,
+    *,
+    actor: AuditActor | None = None,
 ) -> Document:
     """Create a document record for URL ingestion."""
 
@@ -170,6 +231,9 @@ async def create_url_document(
         file_type="html",
         source_type="url",
         source_url=source_url,
+        governance_source_type=payload.governance_source_type,
+        authority_level=payload.authority_level,
+        review_status=payload.review_status,
         metadata_=metadata_with_ingestion_progress(
             payload.metadata,
             stage="queued",
@@ -181,6 +245,23 @@ async def create_url_document(
     )
     session.add(document)
     knowledge_base.document_count += 1
+    await session.flush()
+    await record_document_version(
+        session,
+        document,
+        version_number=1,
+        change_summary="Initial URL document",
+        actor=actor,
+    )
+    record_document_audit_log(
+        session,
+        document=document,
+        action="document.created",
+        summary="URL document created",
+        before={},
+        after=document_snapshot(document),
+        actor=actor,
+    )
     await session.commit()
     await session.refresh(document)
     return document
@@ -259,6 +340,75 @@ async def get_document_asset(
     return result.scalar_one_or_none()
 
 
+async def list_document_versions(
+    session: AsyncSession,
+    document: Document,
+) -> list[DocumentVersion]:
+    """Return immutable version snapshots for one document."""
+
+    result = await session.execute(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == document.id)
+        .order_by(DocumentVersion.version_number.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def list_document_audit_logs(
+    session: AsyncSession,
+    document: Document,
+) -> list[DocumentAuditLog]:
+    """Return audit log entries for one document."""
+
+    result = await session.execute(
+        select(DocumentAuditLog)
+        .where(DocumentAuditLog.document_id == document.id)
+        .order_by(DocumentAuditLog.created_at.desc(), DocumentAuditLog.id.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def update_document_governance(
+    session: AsyncSession,
+    document: Document,
+    payload: DocumentGovernanceUpdateRequest,
+    *,
+    actor: AuditActor | None = None,
+) -> Document:
+    """Update governance fields and persist a version plus audit record."""
+
+    before = document_snapshot(document)
+    updates = payload.model_dump(exclude_unset=True, exclude={"change_summary"})
+    if not updates:
+        return document
+
+    for field_name, value in updates.items():
+        setattr(document, field_name, value)
+
+    next_version = await next_document_version_number(session, document.id)
+    document.current_version = next_version
+    summary = payload.change_summary or "Governance metadata updated"
+    await record_document_version(
+        session,
+        document,
+        version_number=next_version,
+        change_summary=summary,
+        actor=actor,
+    )
+    record_document_audit_log(
+        session,
+        document=document,
+        action="document.governance_updated",
+        summary=summary,
+        before=before,
+        after=document_snapshot(document),
+        actor=actor,
+    )
+    await session.commit()
+    await session.refresh(document)
+    return document
+
+
 def parsed_content_metadata(document: Document) -> dict[str, object] | None:
     """Return parsed full-content metadata stored on a document, if present."""
 
@@ -271,7 +421,12 @@ def parsed_content_metadata(document: Document) -> dict[str, object] | None:
     return value
 
 
-async def reset_document_for_reprocess(session: AsyncSession, document: Document) -> Document:
+async def reset_document_for_reprocess(
+    session: AsyncSession,
+    document: Document,
+    *,
+    actor: AuditActor | None = None,
+) -> Document:
     """Clear existing chunks and mark a document pending for reprocessing."""
 
     await session.execute(delete(Chunk).where(Chunk.document_id == document.id))
@@ -290,16 +445,39 @@ async def reset_document_for_reprocess(session: AsyncSession, document: Document
     document.status = "pending"
     document.error_message = None
     document.chunk_count = 0
+    record_document_audit_log(
+        session,
+        document=document,
+        action="document.reprocessed",
+        summary="Document queued for reprocessing",
+        before={},
+        after=document_snapshot(document),
+        actor=actor,
+    )
     await refresh_knowledge_base_counts(session, document.kb_id)
     await session.commit()
     await session.refresh(document)
     return document
 
 
-async def delete_document(session: AsyncSession, document: Document) -> None:
+async def delete_document(
+    session: AsyncSession,
+    document: Document,
+    *,
+    actor: AuditActor | None = None,
+) -> None:
     """Delete a document and its chunks."""
 
     kb_id = document.kb_id
+    record_document_audit_log(
+        session,
+        document=document,
+        action="document.deleted",
+        summary="Document deleted",
+        before=document_snapshot(document),
+        after={},
+        actor=actor,
+    )
     await session.delete(document)
     await session.flush()
     await refresh_knowledge_base_counts(session, kb_id)
@@ -321,3 +499,107 @@ async def refresh_knowledge_base_counts(session: AsyncSession, kb_id: UUID) -> N
     )
     knowledge_base.document_count = document_count or 0
     knowledge_base.chunk_count = chunk_count or 0
+
+
+async def next_document_version_number(session: AsyncSession, document_id: UUID) -> int:
+    """Return the next version number for a document."""
+
+    current = await session.scalar(
+        select(func.max(DocumentVersion.version_number)).where(
+            DocumentVersion.document_id == document_id
+        )
+    )
+    return (current or 0) + 1
+
+
+async def record_document_version(
+    session: AsyncSession,
+    document: Document,
+    *,
+    version_number: int,
+    change_summary: str,
+    actor: AuditActor | None = None,
+) -> DocumentVersion:
+    """Persist an immutable snapshot of the document's current governance state."""
+
+    document.current_version = version_number
+    version = DocumentVersion(
+        document_id=document.id,
+        kb_id=document.kb_id,
+        version_number=version_number,
+        name=document.name,
+        file_type=document.file_type,
+        file_size=document.file_size,
+        minio_path=document.minio_path,
+        file_hash=document.file_hash,
+        source_type=document.source_type,
+        source_url=document.source_url,
+        governance_source_type=document.governance_source_type,
+        authority_level=document.authority_level,
+        review_status=document.review_status,
+        metadata_=document.metadata_,
+        change_summary=change_summary,
+        created_by_id=actor.user_id if actor else None,
+        created_by_email=actor.email if actor else None,
+    )
+    session.add(version)
+    return version
+
+
+def record_document_audit_log(
+    session: AsyncSession,
+    *,
+    document: Document,
+    action: str,
+    summary: str | None,
+    before: dict[str, object],
+    after: dict[str, object],
+    actor: AuditActor | None = None,
+) -> DocumentAuditLog:
+    """Append a document audit event to the current transaction."""
+
+    entry = DocumentAuditLog(
+        document_id=document.id,
+        kb_id=document.kb_id,
+        actor_user_id=actor.user_id if actor else None,
+        actor_email=actor.email if actor else None,
+        action=action,
+        summary=summary,
+        before=before,
+        after=after,
+    )
+    session.add(entry)
+    return entry
+
+
+def document_snapshot(document: Document) -> dict[str, object]:
+    """Return a JSON-safe governance snapshot for audit/version metadata."""
+
+    return {
+        "id": str(document.id),
+        "kb_id": str(document.kb_id),
+        "name": document.name,
+        "file_type": document.file_type,
+        "file_size": document.file_size,
+        "minio_path": document.minio_path,
+        "file_hash": document.file_hash,
+        "source_type": document.source_type,
+        "source_url": document.source_url,
+        "governance_source_type": document.governance_source_type,
+        "authority_level": document.authority_level,
+        "review_status": document.review_status,
+        "current_version": document.current_version,
+        "status": document.status,
+        "chunk_count": document.chunk_count,
+    }
+
+
+def document_governance_payload(document: Document) -> dict[str, object]:
+    """Return governance fields that must be mirrored into Qdrant payloads."""
+
+    return {
+        "governance_source_type": document.governance_source_type,
+        "authority_level": document.authority_level,
+        "review_status": document.review_status,
+        "document_version": document.current_version,
+    }
