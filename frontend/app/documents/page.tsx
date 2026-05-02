@@ -12,6 +12,7 @@ import {
   Database,
   FileText,
   FileUp,
+  Globe2,
   History,
   Layers3,
   ListFilter,
@@ -47,7 +48,7 @@ import type {
   KnowledgeBase,
 } from "@/lib/types";
 
-type UploadMode = "text" | "files" | null;
+type UploadMode = "text" | "files" | "url" | null;
 type DocumentFilter = "all" | "published" | "reviewed" | "draft" | "deprecated" | "active" | "failed";
 type DocumentWorkspaceView = "overview" | "import" | "library" | "activity";
 type GovernanceWorkspaceView = "overview" | "policy" | "content" | "monitor";
@@ -258,6 +259,8 @@ export default function DocumentsPage() {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
+  const [webPageTitle, setWebPageTitle] = useState("");
+  const [webPageUrl, setWebPageUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [governanceSourceType, setGovernanceSourceType] = useState("");
@@ -487,6 +490,39 @@ export default function DocumentsPage() {
       setActiveView("activity");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Batch upload failed");
+    } finally {
+      window.setTimeout(() => {
+        setUploading(null);
+        setUploadProgress(0);
+      }, 650);
+    }
+  }
+
+  async function uploadWebPage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setImportSummary(null);
+    setUploading("url");
+    try {
+      const document = await apiRequest<DocumentItem>(`/api/v1/knowledge-bases/${kbId}/documents/url`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: webPageTitle.trim() || null,
+          url: webPageUrl.trim(),
+          governance_source_type: governanceSourceType,
+          authority_level: Number(authorityLevel),
+          review_status: reviewStatus,
+        }),
+      });
+      setProgressByRun((current) => ({ ...current, [documentProgressKey(document)]: 22 }));
+      setImportSummary(`Queued web page: ${document.name}`);
+      setUploadProgress(100);
+      setWebPageTitle("");
+      setWebPageUrl("");
+      await loadDocuments();
+      setActiveView("activity");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Web page import failed");
     } finally {
       window.setTimeout(() => {
         setUploading(null);
@@ -798,7 +834,7 @@ export default function DocumentsPage() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle>Ingestion workbench</CardTitle>
-              <CardDescription>Set source governance once, then import text or files into the selected knowledge base.</CardDescription>
+              <CardDescription>Set source governance once, then import text, files, or web pages into the selected knowledge base.</CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={() => setActiveView("overview")} className="gap-2">
@@ -811,7 +847,7 @@ export default function DocumentsPage() {
           </div>
         </div>
         <div className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className="grid divide-y divide-slate-100 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+          <div className="grid divide-y divide-slate-100 xl:grid-cols-3 xl:divide-x xl:divide-y-0">
             <form className="space-y-4 p-6" onSubmit={uploadText}>
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 text-blue-700">
@@ -869,6 +905,33 @@ export default function DocumentsPage() {
               )}
               <Button type="submit" disabled={!kbId || files.length === 0 || uploading !== null || !governanceReady} className="gap-2">
                 <Upload className="h-4 w-4" /> {uploading === "files" ? "Queueing" : "Import files"}
+              </Button>
+            </form>
+
+            <form className="space-y-4 p-6" onSubmit={uploadWebPage}>
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-violet-100 bg-violet-50 text-violet-700">
+                  <Globe2 className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-950">Web page</p>
+                  <p className="text-sm text-slate-500">Fetch an article or page by URL.</p>
+                </div>
+              </div>
+              <Input
+                type="url"
+                value={webPageUrl}
+                onChange={(event) => setWebPageUrl(event.target.value)}
+                placeholder="https://example.com/article"
+                required
+              />
+              <Input
+                value={webPageTitle}
+                onChange={(event) => setWebPageTitle(event.target.value)}
+                placeholder="Optional title"
+              />
+              <Button type="submit" disabled={!kbId || uploading !== null || !governanceReady || !webPageUrl.trim()} className="gap-2">
+                <Upload className="h-4 w-4" /> {uploading === "url" ? "Queueing" : "Import page"}
               </Button>
             </form>
           </div>
@@ -961,9 +1024,15 @@ export default function DocumentsPage() {
               <div className="space-y-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <p className="font-semibold text-slate-950">{uploading === "files" ? "Uploading files" : "Uploading text"}</p>
+                    <p className="font-semibold text-slate-950">
+                      {uploading === "files" ? "Uploading files" : uploading === "url" ? "Importing web page" : "Uploading text"}
+                    </p>
                     <p className="mt-1 text-sm text-slate-500">
-                      {uploading === "files" ? `Queueing ${formatNumber(files.length)} files` : "Creating document record"}
+                      {uploading === "files"
+                        ? `Queueing ${formatNumber(files.length)} files`
+                        : uploading === "url"
+                          ? webPageUrl || "Creating URL document record"
+                          : "Creating document record"}
                     </p>
                   </div>
                   <Badge variant="info">requesting</Badge>

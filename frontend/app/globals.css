@@ -88,15 +88,6 @@ body {
   }
 }
 
-@keyframes sweep {
-  0% {
-    transform: translateX(-48%);
-  }
-  100% {
-    transform: translateX(148%);
-  }
-}
-
 @keyframes float-y {
   0%, 100% {
     transform: translateY(0);

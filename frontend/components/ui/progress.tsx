@@ -48,15 +48,11 @@ export function ProgressBar({
       <div className="h-2 overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200">
         <div
           className={cn(
-            "relative h-full overflow-hidden rounded-full transition-[width] duration-700 ease-out motion-reduce:transition-none",
+            "h-full rounded-full transition-[width] duration-700 ease-out motion-reduce:transition-none",
             toneClasses[tone],
           )}
           style={{ width: `${safeValue}%` }}
-        >
-          {indeterminate && safeValue > 0 && (
-            <span className="absolute inset-y-0 left-0 w-14 max-w-full animate-[sweep_1.6s_ease-in-out_infinite] bg-white/30 motion-reduce:hidden" />
-          )}
-        </div>
+        />
       </div>
     </div>
   );

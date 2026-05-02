@@ -45,9 +45,7 @@ export function PipelineLoader({
               <Icon className="h-4 w-4" />
             </div>
             {index < nodes.length - 1 && (
-              <div className="relative h-1 overflow-hidden rounded-full bg-cyan-100">
-                <span className="absolute inset-y-0 w-1/2 rounded-full bg-cyan-500" style={{ animation: `sweep 1.25s ease-in-out ${index * 160}ms infinite` }} />
-              </div>
+              <div className="h-1 rounded-full bg-cyan-200" />
             )}
           </React.Fragment>
         ))}
