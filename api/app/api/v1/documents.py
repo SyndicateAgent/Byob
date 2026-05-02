@@ -26,7 +26,6 @@ from api.app.schemas.document import (
     DocumentTextCreateRequest,
     DocumentUrlCreateRequest,
     DocumentVersionListResponse,
-    GovernanceSourceType,
     ReviewStatus,
 )
 from api.app.services.document_service import (
@@ -63,8 +62,8 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 AssetUserDep = Annotated[CurrentUser, Depends(get_current_user_or_query_token)]
 UploadFileField = Annotated[UploadFile, File()]
 BatchUploadFilesField = Annotated[list[UploadFile], File()]
-GovernanceSourceTypeField = Annotated[GovernanceSourceType, Form()]
-AuthorityLevelField = Annotated[int, Form(ge=1, le=5)]
+GovernanceSourceTypeField = Annotated[str, Form(min_length=1, max_length=100)]
+AuthorityLevelField = Annotated[int, Form(ge=1)]
 ReviewStatusField = Annotated[ReviewStatus, Form()]
 BatchSkipReason = Literal["duplicate_name", "duplicate_file_hash", "empty_file"]
 
@@ -82,7 +81,7 @@ def current_actor(current_user: CurrentUser) -> AuditActor:
 
 
 def governance_input(
-    governance_source_type: GovernanceSourceType,
+    governance_source_type: str,
     authority_level: int,
     review_status: ReviewStatus,
 ) -> DocumentGovernanceInput:

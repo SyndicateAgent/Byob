@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from mcp.types import CallToolResult, TextContent
 
@@ -10,12 +10,28 @@ from api.app.schemas.retrieval import RetrievalAssetRef, RetrievalDocument
 from api.app.services.agent_service import (
     AgentImageInput,
     append_source_asset_section,
+    build_chat_completion_request_body,
     build_extract_answer,
     build_user_message_content,
     chat_completions_url,
     extract_tool_payload,
     select_image_assets_for_llm,
 )
+
+
+def retrieval_document(
+    document_id: UUID | None = None,
+    *,
+    name: str = "paper.md",
+) -> RetrievalDocument:
+    return RetrievalDocument(
+        id=document_id or uuid4(),
+        name=name,
+        metadata={},
+        governance_source_type="client_policy_archive",
+        authority_level=42,
+        review_status="published",
+    )
 
 
 def test_agent_route_is_mounted() -> None:
@@ -51,7 +67,7 @@ def test_extract_tool_payload_reads_structured_or_text_content() -> None:
 def test_extractive_answer_preserves_rich_markdown_sources() -> None:
     """Fallback answers keep formulas, images, and tables renderable as Markdown."""
 
-    document = RetrievalDocument(id=uuid4(), name="paper.md", metadata={})
+    document = retrieval_document()
     source = AgentSource(
         source_id="S1",
         chunk_id=uuid4(),
@@ -81,7 +97,7 @@ def test_agent_appends_retrieved_assets_when_answer_omits_them() -> None:
 
     document_id = uuid4()
     asset_id = uuid4()
-    document = RetrievalDocument(id=document_id, name="paper.md", metadata={})
+    document = retrieval_document(document_id)
     asset = RetrievalAssetRef(
         id=asset_id,
         document_id=document_id,
@@ -118,7 +134,7 @@ def test_agent_multimodal_prompt_uses_image_url_content() -> None:
 
     document_id = uuid4()
     asset_id = uuid4()
-    document = RetrievalDocument(id=document_id, name="paper.md", metadata={})
+    document = retrieval_document(document_id)
     asset = RetrievalAssetRef(
         id=asset_id,
         document_id=document_id,
@@ -158,8 +174,30 @@ def test_agent_multimodal_prompt_uses_image_url_content() -> None:
             )
         ],
         max_chars=12000,
+        image_detail="high",
     )
 
     assert selected == [(source, asset)]
     assert isinstance(content, list)
-    assert content[1]["type"] == "image_url"
+    assert content[1]["type"] == "text"
+    assert "Image input for [S1]" in str(content[1]["text"])
+    assert str(asset_id) in str(content[1]["text"])
+    assert f"![]({asset.url})" in str(content[1]["text"])
+    assert content[2]["type"] == "image_url"
+    assert content[2]["image_url"] == {
+        "url": "data:image/png;base64,AAAA",
+        "detail": "high",
+    }
+
+
+def test_agent_chat_request_body_uses_configured_temperature() -> None:
+    """Provider-specific temperature requirements are configurable."""
+
+    body = build_chat_completion_request_body(
+        Settings(agent_llm_temperature=1.0),
+        AgentAskRequest(question="What color is the image?"),
+        [],
+        [],
+    )
+
+    assert body["temperature"] == 1.0

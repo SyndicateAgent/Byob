@@ -4,13 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from workers.parsers import pdf_parser
+from workers.parsers import mineru_parser, pdf_parser
 from workers.parsers.base import ParsedDocument
-from workers.parsers.pdf_parser import PdfParserConfig, clean_pdf_extracted_text, parse_pdf
+from workers.parsers.mineru_parser import content_list_to_chunks
+from workers.parsers.pdf_parser import PdfParserConfig, parse_pdf
 
 
 def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) -> None:
-    """MinerU content-list output is preferred because it preserves layout blocks."""
+    """PDF parsing delegates to MinerU and preserves typed content-list chunks."""
 
     def fake_run(
         command: list[str],
@@ -32,16 +33,12 @@ def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) ->
         image_dir.mkdir()
         (image_dir / "figure.png").write_bytes(b"fake png")
         content_list = [
-            {"type": "text", "text": "Section title\nV i c t i m(s)", "page_idx": 0},
+            {"type": "text", "text": "# Section title", "level": 1, "page_idx": 0},
             {"type": "equation", "text": "$E=mc^2$", "page_idx": 0},
             {
                 "type": "table",
                 "caption": ["Table 1"],
-                "html": (
-                    "<table><tr><td>Num ber</td>"
-                    "<td>hw1\\diary\\d iary 4.26.txt</td>"
-                    "<td>eac7faf73f64dba 833466d3b21c2 ce3a</td></tr></table>"
-                ),
+                "html": "<table><tr><td>Number</td></tr></table>",
                 "page_idx": 1,
             },
             {
@@ -57,8 +54,8 @@ def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) ->
         )
         return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
 
-    monkeypatch.setattr(pdf_parser.shutil, "which", lambda command: command)
-    monkeypatch.setattr(pdf_parser.subprocess, "run", fake_run)
+    monkeypatch.setattr(mineru_parser.shutil, "which", lambda command: command)
+    monkeypatch.setattr(mineru_parser.subprocess, "run", fake_run)
 
     parsed = parse_pdf(
         b"%PDF-1.7",
@@ -78,16 +75,17 @@ def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) ->
         "table": 1,
         "image": 1,
     }
-    assert "Section title" in parsed.text
-    assert "Victim(s)" in parsed.text
-    assert "$E=mc^2$" in parsed.text
-    assert "<table>" in parsed.text
-    assert "Num ber" not in parsed.text
-    assert "<td>Number</td>" in parsed.text
-    assert "d iary" not in parsed.text
-    assert "diary 4.26.txt" in parsed.text
-    assert "eac7faf73f64dba833466d3b21c2ce3a" in parsed.text
-    assert "Figure caption" in parsed.text
+    assert [chunk.chunk_type for chunk in parsed.chunks] == [
+        "text",
+        "equation",
+        "table",
+        "image",
+    ]
+    assert parsed.chunks[0].metadata["title_path"] == ["Section title"]
+    assert parsed.chunks[1].metadata["latex"] == "$E=mc^2$"
+    assert parsed.chunks[2].metadata["table_caption"] == "Table 1"
+    assert parsed.chunks[3].metadata["image_caption"] == "Figure caption"
+    assert parsed.chunks[3].metadata["image_path"] == "images/figure.png"
     assert "![Figure caption](images/figure.png)" in parsed.text
     assert len(parsed.assets) == 1
     assert parsed.assets[0].source_path == "images/figure.png"
@@ -100,26 +98,55 @@ def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) ->
     ]
 
 
-def test_pdf_text_cleanup_repairs_spacing_without_breaking_html_tags() -> None:
-    """PDF/OCR spacing cleanup should preserve tags while repairing text nodes."""
+def test_content_list_to_chunks_tracks_title_path_bbox_and_rich_types() -> None:
+    """MinerU content-list blocks become RAG chunks with useful metadata."""
 
-    cleaned = clean_pdf_extracted_text(
-        "<table><tr><td>V i c t i m</td><td>Num ber</td>"
-        "<td>normal words stay spaced</td></tr></table>"
+    text, metadata, chunks = content_list_to_chunks(
+        [
+            {"type": "text", "text": "# Incident Report", "level": 1, "page_idx": 0},
+            {"type": "text", "text": "Timeline details", "page_idx": 0},
+            {
+                "type": "table",
+                "table_caption": ["Evidence table"],
+                "table_body": "<table><tr><td>Item</td></tr></table>",
+                "page_idx": 1,
+                "bbox": [10, 20, 200, 260],
+            },
+            {
+                "type": "image",
+                "img_caption": ["Scene image"],
+                "img_path": "images/scene.png",
+                "page_idx": 1,
+            },
+            {"type": "equation", "latex": "a^2+b^2=c^2", "page_idx": 2},
+        ]
     )
 
-    assert cleaned == (
-        "<table><tr><td>Victim</td><td>Number</td>"
-        "<td>normal words stay spaced</td></tr></table>"
-    )
+    assert metadata["page_count"] == 3
+    assert "Incident Report" in text
+    assert [chunk.chunk_type for chunk in chunks] == [
+        "text",
+        "text",
+        "table",
+        "image",
+        "equation",
+    ]
+    assert chunks[1].metadata["title_path"] == ["Incident Report"]
+    assert chunks[2].page_num == 2
+    assert chunks[2].bbox == {"points": [10, 20, 200, 260]}
+    assert chunks[2].metadata["table_caption"] == "Evidence table"
+    assert chunks[3].metadata["image_caption"] == "Scene image"
+    assert chunks[3].metadata["image_path"] == "images/scene.png"
+    assert "![Scene image](images/scene.png)" in chunks[3].content
+    assert chunks[4].metadata["latex"] == "a^2+b^2=c^2"
 
 
 def test_pdf_parser_falls_back_to_pypdf_when_mineru_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Local development remains usable when MinerU has not been installed yet."""
+    """PDF fallback stays isolated from the MinerU parser implementation."""
 
-    monkeypatch.setattr(pdf_parser.shutil, "which", lambda command: None)
+    monkeypatch.setattr(mineru_parser.shutil, "which", lambda command: None)
     monkeypatch.setattr(
         pdf_parser,
         "parse_pdf_with_pypdf",

@@ -1,6 +1,7 @@
 import httpx
 
 from api.app.config import Settings
+from api.app.core.http_urls import normalize_loopback_endpoint_url
 
 
 class RerankClient:
@@ -8,7 +9,9 @@ class RerankClient:
 
     def __init__(self, settings: Settings) -> None:
         self._enabled = settings.rerank_enabled
-        self._endpoint_url = str(settings.rerank_endpoint_url).rstrip("/")
+        self._endpoint_url = normalize_loopback_endpoint_url(
+            str(settings.rerank_endpoint_url)
+        ).rstrip("/")
         self._model = settings.rerank_model
         self._client = httpx.AsyncClient(timeout=30.0, trust_env=False)
 

@@ -32,8 +32,8 @@ from api.app.services.document_service import (
     metadata_with_ingestion_progress,
     refresh_knowledge_base_counts,
 )
-from workers.chunkers.semantic_chunker import chunk_text
-from workers.parsers.base import ParsedAsset
+from workers.chunkers.semantic_chunker import chunk_text, merge_structured_chunks
+from workers.parsers.base import ParsedAsset, ParsedChunk, ParsedDocument
 from workers.parsers.pdf_parser import PdfParserConfig
 from workers.parsers.registry import parse_document_bytes
 
@@ -68,7 +68,9 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
     )
     qdrant_client = QdrantStoreClient(
         str(settings.qdrant_url),
-        settings.dependency_health_timeout_seconds,
+        settings.qdrant_timeout_seconds,
+        health_timeout_seconds=settings.dependency_health_timeout_seconds,
+        upsert_batch_size=settings.qdrant_upsert_batch_size,
     )
     embedding_client = EmbeddingClient(settings)
     clip_embedding_client = ClipEmbeddingClient(settings)
@@ -97,6 +99,7 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
         parsed = parse_document_bytes(
             content,
             document.file_type,
+            source_name=document.name,
             pdf_config=PdfParserConfig(
                 parser=settings.pdf_parser,
                 mineru_command=settings.mineru_command,
@@ -155,8 +158,11 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             progress=56,
             detail="Chunking parsed content",
         )
-        parsed_chunks = chunk_text(
-            parsed_text,
+        parsed_chunks = build_ingestion_chunks(
+            parsed,
+            parsed_text=parsed_text,
+            asset_replacements=stored_assets.replacements,
+            file_type=document.file_type,
             chunk_size=knowledge_base.chunk_size,
             chunk_overlap=knowledge_base.chunk_overlap,
         )
@@ -167,7 +173,20 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             progress=70,
             detail=f"Embedding {len(parsed_chunks)} chunks",
         )
-        embeddings = await embedding_client.embed_texts([chunk.content for chunk in parsed_chunks])
+
+        async def report_embedding_progress(completed: int, total: int) -> None:
+            await update_document_progress(
+                session_factory,
+                document.id,
+                stage="embedding",
+                progress=70 + int((completed / max(total, 1)) * 10),
+                detail=f"Embedded {completed}/{total} chunks",
+            )
+
+        embeddings = await embedding_client.embed_texts(
+            [chunk.content for chunk in parsed_chunks],
+            progress_callback=report_embedding_progress,
+        )
         await update_document_progress(
             session_factory,
             document.id,
@@ -200,6 +219,8 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                     content=parsed_chunk.content,
                     content_hash=sha256(parsed_chunk.content.encode("utf-8")).hexdigest(),
                     chunk_type=parsed_chunk.chunk_type,
+                    page_num=parsed_chunk.page_num,
+                    bbox=parsed_chunk.bbox,
                     qdrant_point_id=point_id,
                     metadata_={**parsed_metadata, **parsed_chunk.metadata},
                 )
@@ -569,6 +590,56 @@ def rewrite_asset_references(text: str, replacements: Mapping[str, str]) -> str:
     return rewritten
 
 
+def build_ingestion_chunks(
+    parsed: ParsedDocument,
+    *,
+    parsed_text: str,
+    asset_replacements: Mapping[str, str],
+    file_type: str | None,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[ParsedChunk]:
+    """Build final chunks from parser-emitted structured chunks or plain text."""
+
+    if not parsed.chunks:
+        return chunk_text(parsed_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    structured_chunks = [
+        rewrite_parsed_chunk(
+            chunk,
+            asset_replacements=asset_replacements,
+        )
+        for chunk in parsed.chunks
+    ]
+    return merge_structured_chunks(
+        structured_chunks,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+
+
+def rewrite_parsed_chunk(
+    chunk: ParsedChunk,
+    *,
+    asset_replacements: Mapping[str, str],
+) -> ParsedChunk:
+    """Rewrite parser chunk content into the persisted ingestion representation."""
+
+    content = rewrite_asset_references(chunk.content, asset_replacements)
+    metadata = dict(chunk.metadata)
+    if chunk.page_num is not None:
+        metadata.setdefault("page_num", chunk.page_num)
+    if chunk.bbox is not None:
+        metadata.setdefault("bbox", chunk.bbox)
+    return ParsedChunk(
+        content=content,
+        chunk_type=chunk.chunk_type,
+        page_num=chunk.page_num,
+        bbox=chunk.bbox,
+        metadata=metadata,
+    )
+
+
 def rewrite_markdown_asset_reference(text: str, source: str, target: str) -> str:
     """Rewrite Markdown image/link targets that match a parsed asset source."""
 
@@ -698,16 +769,7 @@ def build_qdrant_point(
             "chunk_type": chunk.chunk_type,
             "tags": chunk.metadata_.get("tags", []),
             "created_at": created_at,
-            **(
-                document_governance_payload(document)
-                if document is not None
-                else {
-                    "governance_source_type": "internal_sop",
-                    "authority_level": 3,
-                    "review_status": "published",
-                    "document_version": 1,
-                }
-            ),
+            **(document_governance_payload(document) if document is not None else {}),
         },
     )
 

@@ -22,14 +22,19 @@ class Settings(BaseSettings):
     )
     redis_url: str = "redis://localhost:6379/0"
     qdrant_url: AnyUrl = AnyUrl("http://localhost:6333")
+    qdrant_timeout_seconds: float = Field(default=60.0, ge=1.0)
+    qdrant_upsert_batch_size: int = Field(default=128, ge=1)
 
     minio_endpoint_url: AnyUrl = AnyUrl("http://localhost:9000")
     minio_access_key: str = "minioadmin"
     minio_secret_key: SecretStr = SecretStr("minioadmin")
     minio_bucket: str = "byob"
-    embedding_endpoint_url: AnyUrl = AnyUrl("http://localhost:7997")
+    embedding_endpoint_url: AnyUrl = AnyUrl("http://127.0.0.1:7997")
     embedding_model: str = "BAAI/bge-m3"
     embedding_dimension: int = 1024
+    embedding_timeout_seconds: float = Field(default=120.0, ge=1.0)
+    embedding_batch_size: int = Field(default=4, ge=1)
+    embedding_max_input_chars: int = Field(default=4_000, ge=1_000)
     multimodal_rag_enabled: bool = True
     clip_model: str = "openai/clip-vit-base-patch32"
     clip_embedding_dimension: int = 512
@@ -46,7 +51,7 @@ class Settings(BaseSettings):
     mineru_formula_enable: bool = True
     mineru_table_enable: bool = True
     mineru_fallback_to_pypdf: bool = True
-    rerank_endpoint_url: AnyUrl = AnyUrl("http://localhost:7998")
+    rerank_endpoint_url: AnyUrl = AnyUrl("http://127.0.0.1:7998")
     rerank_model: str = "BAAI/bge-reranker-base"
     rerank_enabled: bool = True
     retrieval_cache_ttl_seconds: int = 300
@@ -56,6 +61,9 @@ class Settings(BaseSettings):
     agent_llm_api_key: SecretStr | None = None
     agent_llm_model: str = "qwen2.5:7b-instruct"
     agent_llm_timeout_seconds: float = 60.0
+    agent_llm_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    agent_llm_multimodal_enabled: bool = True
+    agent_llm_image_detail: Literal["auto", "low", "high"] = "auto"
     agent_max_context_chars: int = 12000
     agent_max_image_assets: int = 3
     agent_max_image_bytes: int = 2_000_000

@@ -1,3 +1,4 @@
+from asyncio import wait_for
 from collections.abc import Mapping
 
 from qdrant_client import AsyncQdrantClient
@@ -16,7 +17,16 @@ def visual_collection_name(collection_name: str) -> str:
 class QdrantStoreClient:
     """Async Qdrant client wrapper for vector store operations."""
 
-    def __init__(self, url: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        url: str,
+        timeout_seconds: float,
+        *,
+        health_timeout_seconds: float | None = None,
+        upsert_batch_size: int = 128,
+    ) -> None:
+        self._health_timeout_seconds = health_timeout_seconds or timeout_seconds
+        self._upsert_batch_size = max(upsert_batch_size, 1)
         self._client = AsyncQdrantClient(
             url=url,
             timeout=max(1, int(timeout_seconds)),
@@ -27,7 +37,10 @@ class QdrantStoreClient:
     async def ping(self) -> None:
         """Verify Qdrant is reachable."""
 
-        await self._client.get_collections()
+        await wait_for(
+            self._client.get_collections(),
+            timeout=max(1.0, self._health_timeout_seconds),
+        )
 
     async def collection_exists(self, collection_name: str) -> bool:
         """Return whether a collection exists."""
@@ -81,7 +94,12 @@ class QdrantStoreClient:
         if not points:
             return
         try:
-            await self._client.upsert(collection_name=collection_name, points=points, wait=False)
+            for batch in point_batches(points, getattr(self, "_upsert_batch_size", 128)):
+                await self._client.upsert(
+                    collection_name=collection_name,
+                    points=batch,
+                    wait=False,
+                )
         except UnexpectedResponse as exc:
             response = exc.content.decode("utf-8", errors="replace")
             summary = describe_points(points)
@@ -213,6 +231,16 @@ def describe_points(points: list[models.PointStruct]) -> str:
     if isinstance(vector, list):
         return f"dense:{len(vector)}"
     return type(vector).__name__
+
+
+def point_batches(
+    points: list[models.PointStruct],
+    batch_size: int,
+) -> list[list[models.PointStruct]]:
+    """Split Qdrant points into non-empty batches."""
+
+    size = max(batch_size, 1)
+    return [points[index : index + size] for index in range(0, len(points), size)]
 
 
 def describe_vector(name: str, value: object) -> str:

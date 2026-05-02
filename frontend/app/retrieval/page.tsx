@@ -200,7 +200,7 @@ export default function RetrievalPage() {
                   <span className="min-w-0 break-words [overflow-wrap:anywhere]">{result.document.name}</span>
                   <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
                     <Badge variant={reviewStatusVariant(result.document.review_status)}>{result.document.review_status}</Badge>
-                    <Badge variant="muted">L{result.document.authority_level}</Badge>
+                    <Badge variant="muted">Authority {result.document.authority_level}</Badge>
                     {result.rerank_score !== null && <Badge variant="info">rerank {result.rerank_score.toFixed(4)}</Badge>}
                     <span>score {result.score.toFixed(4)}</span>
                   </div>

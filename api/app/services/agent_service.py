@@ -64,7 +64,11 @@ async def answer_with_mcp_agent(
 
     image_inputs: list[AgentImageInput] = []
     asset_warnings: list[str] = []
-    if payload.use_llm and settings.agent_llm_endpoint_url is not None:
+    if (
+        payload.use_llm
+        and settings.agent_llm_endpoint_url is not None
+        and settings.agent_llm_multimodal_enabled
+    ):
         try:
             image_inputs = await fetch_mcp_image_inputs(settings, sources)
         except Exception as exc:
@@ -321,36 +325,7 @@ async def call_chat_completion(
     if settings.agent_llm_api_key is not None:
         headers["Authorization"] = f"Bearer {settings.agent_llm_api_key.get_secret_value()}"
 
-    request_body = {
-        "model": settings.agent_llm_model,
-        "temperature": 0.2,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are BYOB's simple RAG QA Agent. Answer in the user's language. "
-                    "Use only the provided MCP source chunks. Return Markdown. Preserve useful "
-                    "LaTeX formulas, Markdown tables, HTML snippets, and Markdown image syntax "
-                    "from the sources when they help answer the question. If image inputs are "
-                    "provided, inspect them and include the corresponding source asset Markdown "
-                    "URL when the image is relevant. Cite sources as [S1], [S2]. "
-                    "If sources conflict, prefer lower authority_level numbers because level 1 "
-                    "is the most authoritative and level 5 is raw experience. Mention "
-                    "lower-authority conflicts only as caveats. If the sources are insufficient, "
-                    "say so clearly."
-                ),
-            },
-            {
-                "role": "user",
-                "content": build_user_message_content(
-                    payload,
-                    sources,
-                    image_inputs,
-                    settings.agent_max_context_chars,
-                ),
-            },
-        ],
-    }
+    request_body = build_chat_completion_request_body(settings, payload, sources, image_inputs)
     async with httpx.AsyncClient(timeout=settings.agent_llm_timeout_seconds) as client:
         response = await client.post(
             chat_completions_url(str(settings.agent_llm_endpoint_url)),
@@ -366,11 +341,56 @@ async def call_chat_completion(
     return content.strip()
 
 
+def build_chat_completion_request_body(
+    settings: Settings,
+    payload: AgentAskRequest,
+    sources: list[AgentSource],
+    image_inputs: list[AgentImageInput],
+) -> JsonDict:
+    """Build the OpenAI-compatible chat completion request body."""
+
+    return {
+        "model": settings.agent_llm_model,
+        "temperature": settings.agent_llm_temperature,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are BYOB's simple RAG QA Agent. Answer in the user's language. "
+                    "Use only the provided MCP source chunks. Return Markdown. Preserve useful "
+                    "LaTeX formulas, Markdown tables, HTML snippets, and Markdown image syntax "
+                    "from the sources when they help answer the question. If image inputs are "
+                    "provided, inspect them directly. Each image is preceded by a text block "
+                    "that maps it to a source id and asset URL. Include the corresponding "
+                    "source asset Markdown URL when the image is relevant. Cite sources as "
+                    "[S1], [S2]. "
+                    "If sources conflict, follow the project's authority_level policy: lower "
+                    "numeric authority_level values are treated as higher priority unless the "
+                    "user's question says otherwise. Mention lower-priority conflicts only as "
+                    "caveats. If the sources are insufficient, "
+                    "say so clearly."
+                ),
+            },
+            {
+                "role": "user",
+                "content": build_user_message_content(
+                    payload,
+                    sources,
+                    image_inputs,
+                    settings.agent_max_context_chars,
+                    settings.agent_llm_image_detail,
+                ),
+            },
+        ],
+    }
+
+
 def build_user_message_content(
     payload: AgentAskRequest,
     sources: list[AgentSource],
     image_inputs: list[AgentImageInput],
     max_chars: int,
+    image_detail: str = "auto",
 ) -> str | list[dict[str, object]]:
     """Return text or OpenAI-compatible multimodal user message content."""
 
@@ -380,16 +400,28 @@ def build_user_message_content(
 
     content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
     for image in image_inputs:
+        content.append({"type": "text", "text": image_input_context(image)})
         content.append(
             {
                 "type": "image_url",
                 "image_url": {
                     "url": image.data_uri,
-                    "detail": "auto",
+                    "detail": image_detail,
                 },
             }
         )
     return content
+
+
+def image_input_context(image: AgentImageInput) -> str:
+    """Describe one image block so a vision model can map it back to a source."""
+
+    return (
+        f"Image input for [{image.source_id}] asset_id={image.asset_id}, "
+        f"content_type={image.content_type}, markdown_url={image.url}. "
+        f"When this image is relevant, cite [{image.source_id}] and include "
+        f"the Markdown image link ![]({image.url})."
+    )
 
 
 def chat_completions_url(endpoint_url: str) -> str:
@@ -475,7 +507,7 @@ def build_extract_answer(payload: AgentAskRequest, sources: list[AgentSource], r
         )
     source_lines = [
         f"- [{source.source_id}] `{source.document.name}` - "
-        f"authority L{source.document.authority_level} - "
+        f"authority {source.document.authority_level} - "
         f"{source.document.review_status} - chunk `{source.chunk_id}` - score `{source.score:.4f}`"
         for source in sources
     ]

@@ -208,7 +208,7 @@ export default function AgentPage() {
                       <div className="flex items-center gap-2">
                         <Badge variant="muted">{source.source_id}</Badge>
                         <Badge variant={reviewStatusVariant(source.document.review_status)}>{source.document.review_status}</Badge>
-                        <Badge variant="muted">L{source.document.authority_level}</Badge>
+                        <Badge variant="muted">Authority {source.document.authority_level}</Badge>
                         <span className="truncate text-sm font-medium text-slate-900" title={source.document.name}>
                           {source.document.name}
                         </span>

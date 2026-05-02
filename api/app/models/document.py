@@ -30,10 +30,8 @@ class Document(Base):
     file_hash: Mapped[str | None] = mapped_column(String(64))
     source_type: Mapped[str] = mapped_column(String(50), server_default="upload")
     source_url: Mapped[str | None] = mapped_column(Text)
-    governance_source_type: Mapped[str] = mapped_column(
-        String(50), default="internal_sop", server_default="internal_sop"
-    )
-    authority_level: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    governance_source_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    authority_level: Mapped[int] = mapped_column(Integer, nullable=False)
     review_status: Mapped[str] = mapped_column(
         String(20), default="draft", server_default="draft"
     )

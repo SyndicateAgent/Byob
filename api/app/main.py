@@ -31,7 +31,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.redis_url, settings.dependency_health_timeout_seconds
     )
     app.state.qdrant_client = QdrantStoreClient(
-        str(settings.qdrant_url), settings.dependency_health_timeout_seconds
+        str(settings.qdrant_url),
+        settings.qdrant_timeout_seconds,
+        health_timeout_seconds=settings.dependency_health_timeout_seconds,
+        upsert_batch_size=settings.qdrant_upsert_batch_size,
     )
     app.state.embedding_client = EmbeddingClient(settings)
     app.state.clip_embedding_client = ClipEmbeddingClient(settings)

@@ -33,7 +33,7 @@ class DocumentVersion(Base):
     file_hash: Mapped[str | None] = mapped_column(String(64))
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)
     source_url: Mapped[str | None] = mapped_column(Text)
-    governance_source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    governance_source_type: Mapped[str] = mapped_column(String(100), nullable=False)
     authority_level: Mapped[int] = mapped_column(Integer, nullable=False)
     review_status: Mapped[str] = mapped_column(String(20), nullable=False)
     metadata_: Mapped[dict[str, object]] = mapped_column("metadata", JSONB, server_default="{}")

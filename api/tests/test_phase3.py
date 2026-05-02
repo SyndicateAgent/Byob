@@ -1,10 +1,12 @@
 from datetime import UTC, datetime
+from io import BytesIO
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import Request
+from PIL import Image
 from pytest import MonkeyPatch
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -19,17 +21,20 @@ from api.app.models.chunk import Chunk
 from api.app.models.document import Document
 from api.app.models.knowledge_base import KnowledgeBase
 from api.app.schemas.auth import CurrentUser
+from api.app.schemas.document import DocumentTextCreateRequest
 from api.app.services.document_service import (
     find_duplicate_document,
     metadata_with_ingestion_progress,
 )
 from api.app.services.ingestion_service import (
+    build_ingestion_chunks,
     build_qdrant_point,
     parsed_content_type,
     rewrite_asset_references,
     sparse_vector,
 )
-from workers.chunkers.semantic_chunker import chunk_text
+from workers.chunkers.semantic_chunker import chunk_text, merge_structured_chunks
+from workers.parsers.base import ParsedChunk, ParsedDocument
 from workers.parsers.registry import parse_document_bytes
 
 
@@ -60,6 +65,55 @@ def test_text_parser_and_chunker_create_chunks() -> None:
     assert parsed.metadata["file_type"] == "txt"
     assert len(chunks) >= 2
     assert all(chunk.content for chunk in chunks)
+
+
+def image_bytes(image_format: str) -> bytes:
+    """Create a tiny valid image for parser tests."""
+
+    buffer = BytesIO()
+    Image.new("RGB", (3, 2), color=(32, 96, 160)).save(buffer, format=image_format)
+    return buffer.getvalue()
+
+
+def test_image_parser_creates_standalone_visual_asset() -> None:
+    """JPEG/PNG uploads should become image assets referenced by parsed Markdown."""
+
+    parsed = parse_document_bytes(
+        image_bytes("PNG"),
+        "png",
+        source_name="sales trend.png",
+    )
+
+    assert parsed.metadata["parser"] == "image"
+    assert parsed.metadata["content_type"] == "image/png"
+    assert parsed.metadata["width"] == 3
+    assert parsed.metadata["height"] == 2
+    assert "![sales trend](sales trend.png)" in parsed.text
+    assert "dimensions: 3x2" in parsed.text
+    assert len(parsed.assets) == 1
+    assert parsed.assets[0].source_path == "sales trend.png"
+    assert parsed.assets[0].content_type == "image/png"
+    assert parsed.assets[0].metadata["aliases"] == [
+        "sales trend.png",
+        "./sales trend.png",
+    ]
+
+
+def test_image_parser_supports_jpeg_without_filename_extension() -> None:
+    """JPEG uploads without a filename suffix still get a rewriteable source path."""
+
+    parsed = parse_document_bytes(image_bytes("JPEG"), "jpeg", source_name="diagram")
+
+    assert parsed.assets[0].source_path == "diagram.jpg"
+    assert parsed.assets[0].content_type == "image/jpeg"
+    assert parsed.metadata["image_format"] == "JPEG"
+
+
+def test_image_parser_rejects_invalid_image_bytes() -> None:
+    """Image file extensions must contain decodable JPEG/PNG bytes."""
+
+    with pytest.raises(ValueError, match="Invalid image document"):
+        parse_document_bytes(b"not an image", "png", source_name="broken.png")
 
 
 def test_chunker_splits_cjk_text_without_spaces() -> None:
@@ -113,6 +167,68 @@ def test_chunker_repairs_spaced_markdown_asset_reference() -> None:
     assert "![](/api/v1/documents/doc/assets/asset)" in content
 
 
+def test_structured_chunker_merges_text_only() -> None:
+    """Text blocks merge by size while table/image/equation chunks stay atomic."""
+
+    chunks = merge_structured_chunks(
+        [
+            ParsedChunk(
+                content="Heading",
+                metadata={"heading_level": 1, "title_path": ["Heading"]},
+            ),
+            ParsedChunk(content="alpha beta", metadata={"title_path": ["Heading"]}),
+            ParsedChunk(content="gamma delta", metadata={"title_path": ["Heading"]}),
+            ParsedChunk(content="| A | B |\n| - | - |\n| 1 | 2 |", chunk_type="table"),
+            ParsedChunk(content="epsilon zeta", metadata={"title_path": ["Heading"]}),
+            ParsedChunk(content="![chart](images/chart.png)", chunk_type="image"),
+        ],
+        chunk_size=12,
+        chunk_overlap=1,
+    )
+
+    assert [chunk.chunk_type for chunk in chunks] == ["text", "table", "text", "image"]
+    assert chunks[0].content == "Heading alpha beta gamma delta"
+    assert chunks[1].content.startswith("| A | B |")
+    assert chunks[2].content == "epsilon zeta"
+
+
+def test_ingestion_uses_structured_chunks_with_rewritten_assets() -> None:
+    """Parser-emitted chunks keep type/page metadata and get backend asset URLs."""
+
+    parsed = ParsedDocument(
+        text="Figure\n![Chart](images/chart.png)",
+        metadata={"parser": "mineru"},
+        chunks=[
+            ParsedChunk(content="Intro text", page_num=1, metadata={"title_path": ["Intro"]}),
+            ParsedChunk(
+                content="Figure\n![Chart](images/chart.png)",
+                chunk_type="image",
+                page_num=2,
+                bbox={"points": [1, 2, 3, 4]},
+                metadata={"image_caption": "Chart", "image_path": "images/chart.png"},
+            ),
+        ],
+    )
+
+    chunks = build_ingestion_chunks(
+        parsed,
+        parsed_text="unused",
+        asset_replacements={"images/chart.png": "/api/v1/documents/doc/assets/asset"},
+        file_type="pdf",
+        chunk_size=30,
+        chunk_overlap=0,
+    )
+
+    assert [chunk.chunk_type for chunk in chunks] == ["text", "image"]
+    assert chunks[0].page_num == 1
+    assert chunks[1].page_num == 2
+    assert chunks[1].bbox == {"points": [1, 2, 3, 4]}
+    assert "![](/api/v1/documents/doc/assets/asset)" not in chunks[1].content
+    assert "![Chart](/api/v1/documents/doc/assets/asset)" in chunks[1].content
+    assert chunks[1].metadata["page_num"] == 2
+    assert chunks[1].metadata["bbox"] == {"points": [1, 2, 3, 4]}
+
+
 def test_qdrant_point_payload_excludes_chunk_content() -> None:
     """Qdrant payload stores identifiers and filters, not source text."""
 
@@ -130,7 +246,22 @@ def test_qdrant_point_payload_excludes_chunk_content() -> None:
         metadata_={"tags": ["manual"]},
     )
 
-    point = build_qdrant_point(chunk, dense_vector=[0.1, 0.2], created_at="2026-04-30T00:00:00Z")
+    document = Document(
+        id=document_id,
+        kb_id=kb_id,
+        name="custom-governance.md",
+        governance_source_type="client_policy_archive",
+        authority_level=42,
+        review_status="published",
+        current_version=7,
+    )
+
+    point = build_qdrant_point(
+        chunk,
+        dense_vector=[0.1, 0.2],
+        created_at="2026-04-30T00:00:00Z",
+        document=document,
+    )
 
     assert point.payload is not None
     assert point.payload["chunk_id"] == str(chunk_id)
@@ -138,7 +269,24 @@ def test_qdrant_point_payload_excludes_chunk_content() -> None:
     assert "tenant_id" not in point.payload
     assert point.payload["tags"] == ["manual"]
     assert point.payload["review_status"] == "published"
-    assert point.payload["authority_level"] == 3
+    assert point.payload["governance_source_type"] == "client_policy_archive"
+    assert point.payload["authority_level"] == 42
+    assert point.payload["document_version"] == 7
+
+
+def test_document_schema_accepts_user_defined_governance_values() -> None:
+    """Document imports accept project-maintained source labels and authority values."""
+
+    payload = DocumentTextCreateRequest(
+        name="custom.md",
+        content="hello",
+        governance_source_type="  client_policy_archive  ",
+        authority_level=42,
+        review_status="published",
+    )
+
+    assert payload.governance_source_type == "client_policy_archive"
+    assert payload.authority_level == 42
 
 
 def test_sparse_vector_merges_hash_index_collisions(monkeypatch: MonkeyPatch) -> None:
@@ -205,6 +353,38 @@ async def test_qdrant_upsert_wraps_unexpected_response() -> None:
     assert "bad vector" in message
 
 
+async def test_qdrant_upsert_batches_points() -> None:
+    """Large ingestion writes should be split into bounded Qdrant requests."""
+
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        async def upsert(
+            self,
+            *,
+            collection_name: str,
+            points: list[models.PointStruct],
+            wait: bool,
+        ) -> None:
+            assert collection_name == "kb_collection"
+            assert wait is False
+            self.batch_sizes.append(len(points))
+
+    points = [
+        models.PointStruct(id=str(uuid4()), vector={"dense": [0.1, 0.2]}, payload={})
+        for _ in range(5)
+    ]
+    recording_client = RecordingClient()
+    client = QdrantStoreClient.__new__(QdrantStoreClient)
+    client._client = recording_client
+    client._upsert_batch_size = 2
+
+    await client.upsert_chunks("kb_collection", points)
+
+    assert recording_client.batch_sizes == [2, 2, 1]
+
+
 async def test_reprocess_deletes_existing_qdrant_points_before_reset(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -224,8 +404,8 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
         minio_path="documents/paper.pdf",
         file_hash="hash",
         source_type="upload",
-        governance_source_type="internal_sop",
-        authority_level=3,
+        governance_source_type="client_policy_archive",
+        authority_level=42,
         review_status="published",
         current_version=1,
         status="completed",
@@ -378,8 +558,8 @@ async def test_content_update_deletes_vectors_before_reindex(
         minio_path="documents/policy.pdf",
         file_hash="hash",
         source_type="upload",
-        governance_source_type="internal_sop",
-        authority_level=3,
+        governance_source_type="client_policy_archive",
+        authority_level=42,
         review_status="published",
         current_version=1,
         status="completed",
@@ -546,8 +726,8 @@ async def test_delete_document_removes_minio_before_db_delete(
         minio_path="knowledge_bases/source-file",
         file_hash="hash",
         source_type="upload",
-        governance_source_type="internal_sop",
-        authority_level=3,
+        governance_source_type="client_policy_archive",
+        authority_level=42,
         review_status="published",
         current_version=1,
         status="completed",

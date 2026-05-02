@@ -35,9 +35,9 @@ class RetrievalDocument(BaseModel):
     id: UUID
     name: str
     metadata: dict[str, object]
-    governance_source_type: str = "internal_sop"
-    authority_level: int = 3
-    review_status: str = "published"
+    governance_source_type: str
+    authority_level: int
+    review_status: str
     version: int = 1
 
 

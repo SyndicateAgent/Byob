@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import {
   Activity,
   ArrowLeft,
@@ -64,15 +64,6 @@ type IngestionProgress = {
 
 const ACTIVE_DOCUMENT_STATUSES = new Set(["pending", "processing"]);
 const DOCUMENT_PROGRESS_STORAGE_KEY = "byob_document_progress";
-const GOVERNANCE_SOURCE_OPTIONS = [
-  { value: "official_law", label: "Official law", level: "L1" },
-  { value: "official_guidance", label: "Official guidance", level: "L2" },
-  { value: "internal_sop", label: "Internal SOP", level: "L3" },
-  { value: "expert_summary", label: "Reviewed expert summary", level: "L4" },
-  { value: "chat_record", label: "Chat record", level: "L5" },
-  { value: "video_transcript", label: "Video transcript", level: "L5" },
-  { value: "other", label: "Other", level: "L5" },
-] as const;
 const REVIEW_STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
   { value: "reviewed", label: "Reviewed" },
@@ -144,7 +135,7 @@ function isActiveDocument(document: DocumentItem) {
 }
 
 function governanceSourceLabel(value: string) {
-  return GOVERNANCE_SOURCE_OPTIONS.find((option) => option.value === value)?.label ?? value;
+  return value;
 }
 
 function reviewStatusVariant(status: string) {
@@ -155,14 +146,12 @@ function reviewStatusVariant(status: string) {
 }
 
 function authorityLabel(level: number) {
-  const labels: Record<number, string> = {
-    1: "L1 official",
-    2: "L2 authoritative",
-    3: "L3 SOP",
-    4: "L4 reviewed",
-    5: "L5 raw",
-  };
-  return labels[level] ?? `L${level}`;
+  return `Authority ${level}`;
+}
+
+function isValidAuthorityLevel(value: string) {
+  const level = Number(value);
+  return Number.isInteger(level) && level >= 1;
 }
 
 function editableFileType(fileType: string | null) {
@@ -298,7 +287,7 @@ export default function DocumentsPage() {
   const [contentSaving, setContentSaving] = useState(false);
   const [governanceError, setGovernanceError] = useState<string | null>(null);
 
-  const governanceReady = Boolean(governanceSourceType && authorityLevel && reviewStatus);
+  const governanceReady = Boolean(governanceSourceType.trim() && isValidAuthorityLevel(authorityLevel) && reviewStatus);
 
   async function loadKnowledgeBases() {
     const response = await apiRequest<{ data: KnowledgeBase[] }>("/api/v1/knowledge-bases");
@@ -431,7 +420,7 @@ export default function DocumentsPage() {
           name,
           content,
           file_type: "txt",
-          governance_source_type: governanceSourceType,
+          governance_source_type: governanceSourceType.trim(),
           authority_level: Number(authorityLevel),
           review_status: reviewStatus,
         }),
@@ -463,7 +452,7 @@ export default function DocumentsPage() {
       for (const selectedFile of files) {
         formData.append("files", selectedFile);
       }
-      formData.append("governance_source_type", governanceSourceType);
+      formData.append("governance_source_type", governanceSourceType.trim());
       formData.append("authority_level", authorityLevel);
       formData.append("review_status", reviewStatus);
       const response = await apiRequest<DocumentBatchUploadResponse>(`/api/v1/knowledge-bases/${kbId}/documents/batch`, {
@@ -509,7 +498,7 @@ export default function DocumentsPage() {
         body: JSON.stringify({
           name: webPageTitle.trim() || null,
           url: webPageUrl.trim(),
-          governance_source_type: governanceSourceType,
+          governance_source_type: governanceSourceType.trim(),
           authority_level: Number(authorityLevel),
           review_status: reviewStatus,
         }),
@@ -659,7 +648,7 @@ export default function DocumentsPage() {
       const updated = await apiRequest<DocumentItem>(`/api/v1/documents/${governanceDocument.id}/governance`, {
         method: "PATCH",
         body: JSON.stringify({
-          governance_source_type: governanceForm.governance_source_type,
+          governance_source_type: governanceForm.governance_source_type.trim(),
           authority_level: Number(governanceForm.authority_level),
           review_status: governanceForm.review_status,
           change_summary: governanceForm.change_summary || null,
@@ -883,13 +872,14 @@ export default function DocumentsPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-slate-950">Batch files</p>
-                  <p className="text-sm text-slate-500">Import PDF, DOCX, Markdown, TXT, or HTML.</p>
+                  <p className="text-sm text-slate-500">Import PDF, DOCX, PPT, PPTX, XLSX, Markdown, TXT, HTML, JPEG, or PNG.</p>
                 </div>
               </div>
               <Input
                 key={fileInputKey}
                 type="file"
                 multiple
+                accept=".pdf,.docx,.ppt,.pptx,.xlsx,.md,.markdown,.txt,.html,.jpg,.jpeg,.png"
                 onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
                 required
               />
@@ -955,6 +945,7 @@ export default function DocumentsPage() {
                   onSourceTypeChange={setGovernanceSourceType}
                   onAuthorityLevelChange={setAuthorityLevel}
                   onReviewStatusChange={setReviewStatus}
+                  sourceOptions={sourceOptions}
                   compact
                 />
               </div>
@@ -1426,6 +1417,7 @@ export default function DocumentsPage() {
                       onSourceTypeChange={(value) => setGovernanceForm((current) => ({ ...current, governance_source_type: value }))}
                       onAuthorityLevelChange={(value) => setGovernanceForm((current) => ({ ...current, authority_level: value }))}
                       onReviewStatusChange={(value) => setGovernanceForm((current) => ({ ...current, review_status: value }))}
+                      sourceOptions={sourceOptions}
                     />
                     <div className="space-y-1">
                       <Label htmlFor="governance-summary">Change summary</Label>
@@ -1445,8 +1437,8 @@ export default function DocumentsPage() {
                         type="submit"
                         disabled={
                           governanceLoading ||
-                          !governanceForm.governance_source_type ||
-                          !governanceForm.authority_level ||
+                          !governanceForm.governance_source_type.trim() ||
+                          !isValidAuthorityLevel(governanceForm.authority_level) ||
                           !governanceForm.review_status
                         }
                         className="gap-2"
@@ -1756,6 +1748,7 @@ function GovernanceFields({
   onSourceTypeChange,
   onAuthorityLevelChange,
   onReviewStatusChange,
+  sourceOptions = [],
   compact = false,
 }: {
   sourceType: string;
@@ -1764,31 +1757,43 @@ function GovernanceFields({
   onSourceTypeChange: (value: string) => void;
   onAuthorityLevelChange: (value: string) => void;
   onReviewStatusChange: (value: string) => void;
+  sourceOptions?: string[];
   compact?: boolean;
 }) {
+  const sourceDatalistId = useId();
+
   return (
     <div className={compact ? "grid gap-3" : "grid gap-3 sm:grid-cols-3"}>
       <div className="space-y-1">
         <Label>Source type</Label>
-        <Select value={sourceType} onChange={(event) => onSourceTypeChange(event.target.value)} required>
-          <option value="">Select source</option>
-          {GOVERNANCE_SOURCE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.level} · {option.label}
-            </option>
-          ))}
-        </Select>
+        <Input
+          value={sourceType}
+          onChange={(event) => onSourceTypeChange(event.target.value)}
+          list={sourceOptions.length > 0 ? sourceDatalistId : undefined}
+          placeholder="Source type"
+          maxLength={100}
+          required
+        />
+        {sourceOptions.length > 0 && (
+          <datalist id={sourceDatalistId}>
+            {sourceOptions.map((source) => (
+              <option key={source} value={source} />
+            ))}
+          </datalist>
+        )}
       </div>
       <div className="space-y-1">
         <Label>Authority</Label>
-        <Select value={authorityLevel} onChange={(event) => onAuthorityLevelChange(event.target.value)} required>
-          <option value="">Select level</option>
-          {[1, 2, 3, 4, 5].map((level) => (
-            <option key={level} value={String(level)}>
-              {authorityLabel(level)}
-            </option>
-          ))}
-        </Select>
+        <Input
+          type="number"
+          min={1}
+          step={1}
+          inputMode="numeric"
+          value={authorityLevel}
+          onChange={(event) => onAuthorityLevelChange(event.target.value)}
+          placeholder="1"
+          required
+        />
       </div>
       <div className="space-y-1">
         <Label>Review status</Label>

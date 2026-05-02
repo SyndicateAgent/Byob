@@ -9,6 +9,7 @@ from workers.celery_app import celery_app
 @celery_app.task(  # type: ignore[untyped-decorator]
     bind=True,
     autoretry_for=(Exception,),
+    dont_autoretry_for=(ValueError,),
     retry_backoff=True,
     retry_kwargs={"max_retries": 3},
 )

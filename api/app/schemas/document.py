@@ -1,17 +1,12 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AnyUrl, BaseModel, ConfigDict, Field
+from pydantic import AnyUrl, BaseModel, ConfigDict, Field, StringConstraints
 
-GovernanceSourceType = Literal[
-    "official_law",
-    "official_guidance",
-    "internal_sop",
-    "expert_summary",
-    "chat_record",
-    "video_transcript",
-    "other",
+GovernanceSourceType = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
 ]
 ReviewStatus = Literal["draft", "reviewed", "published", "deprecated"]
 
@@ -22,7 +17,7 @@ class DocumentGovernanceInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     governance_source_type: GovernanceSourceType
-    authority_level: int = Field(ge=1, le=5)
+    authority_level: int = Field(ge=1)
     review_status: ReviewStatus
 
 
@@ -35,7 +30,7 @@ class DocumentTextCreateRequest(BaseModel):
     content: str = Field(min_length=1)
     file_type: str = Field(default="txt", pattern="^(txt|md|markdown)$")
     governance_source_type: GovernanceSourceType
-    authority_level: int = Field(ge=1, le=5)
+    authority_level: int = Field(ge=1)
     review_status: ReviewStatus
     metadata: dict[str, object] = Field(default_factory=dict)
 
@@ -48,7 +43,7 @@ class DocumentUrlCreateRequest(BaseModel):
     name: str | None = Field(default=None, max_length=500)
     url: AnyUrl
     governance_source_type: GovernanceSourceType
-    authority_level: int = Field(ge=1, le=5)
+    authority_level: int = Field(ge=1)
     review_status: ReviewStatus
     metadata: dict[str, object] = Field(default_factory=dict)
 
@@ -59,7 +54,7 @@ class DocumentGovernanceUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     governance_source_type: GovernanceSourceType | None = None
-    authority_level: int | None = Field(default=None, ge=1, le=5)
+    authority_level: int | None = Field(default=None, ge=1)
     review_status: ReviewStatus | None = None
     change_summary: str | None = Field(default=None, max_length=1000)
 

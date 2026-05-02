@@ -76,34 +76,34 @@ def test_retrieval_governance_defaults_to_published_documents() -> None:
     assert document_matches_governance_filters(draft, {"include_unpublished": True})
 
 
-def test_authority_ranking_prefers_lower_authority_levels() -> None:
-    """Official sources rank ahead of lower-authority experience when both match."""
+def test_authority_ranking_prefers_lower_numeric_authority_values() -> None:
+    """User-defined authority values sort lower numbers ahead of higher numbers."""
 
     kb_id = uuid4()
-    official_doc = Document(id=uuid4(), kb_id=kb_id, name="law", authority_level=1)
-    raw_doc = Document(id=uuid4(), kb_id=kb_id, name="chat", authority_level=5)
-    official_chunk = Chunk(
+    primary_doc = Document(id=uuid4(), kb_id=kb_id, name="primary", authority_level=2)
+    reference_doc = Document(id=uuid4(), kb_id=kb_id, name="reference", authority_level=42)
+    primary_chunk = Chunk(
         id=uuid4(),
-        document_id=official_doc.id,
+        document_id=primary_doc.id,
         kb_id=kb_id,
-        content="law",
+        content="primary",
         chunk_index=0,
     )
-    raw_chunk = Chunk(
+    reference_chunk = Chunk(
         id=uuid4(),
-        document_id=raw_doc.id,
+        document_id=reference_doc.id,
         kb_id=kb_id,
-        content="chat",
+        content="reference",
         chunk_index=1,
     )
 
     ranked = rank_scored_chunks_by_authority(
-        [(raw_chunk, 0.99), (official_chunk, 0.2)],
-        {raw_chunk.id: 0.99, official_chunk.id: 0.2},
-        {official_doc.id: official_doc, raw_doc.id: raw_doc},
+        [(reference_chunk, 0.99), (primary_chunk, 0.2)],
+        {reference_chunk.id: 0.99, primary_chunk.id: 0.2},
+        {primary_doc.id: primary_doc, reference_doc.id: reference_doc},
     )
 
-    assert ranked[0][0] is official_chunk
+    assert ranked[0][0] is primary_chunk
 
 
 def test_retrieval_cache_key_is_payload_scoped() -> None:

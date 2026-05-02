@@ -359,9 +359,9 @@ def rank_scored_chunks_by_authority(
 
 
 def authority_weight(authority_level: int) -> int:
-    """Return a descending weight where level 1 is most authoritative."""
+    """Return a descending sort weight for user-defined authority levels."""
 
-    return max(1, 6 - authority_level)
+    return -authority_level
 
 
 def points_to_candidates(points: list[models.ScoredPoint]) -> list[Candidate]:

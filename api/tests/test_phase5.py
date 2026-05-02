@@ -14,6 +14,17 @@ from api.app.schemas.retrieval import (
 from api.app.services.query_enhancer import decompose_query, enhance_query, rewrite_query
 
 
+def retrieval_document() -> RetrievalDocument:
+    return RetrievalDocument(
+        id=uuid4(),
+        name="doc",
+        metadata={},
+        governance_source_type="client_policy_archive",
+        authority_level=42,
+        review_status="published",
+    )
+
+
 def test_phase_five_routes_are_mounted() -> None:
     """Advanced retrieval capability routes are registered."""
 
@@ -54,7 +65,7 @@ def test_merge_responses_keeps_best_score_per_chunk() -> None:
     """Advanced search response merging deduplicates by chunk id."""
 
     chunk_id = uuid4()
-    document = RetrievalDocument(id=uuid4(), name="doc", metadata={})
+    document = retrieval_document()
     low = RetrievalResult(
         chunk_id=chunk_id,
         content="low",
