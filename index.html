@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="BYOB is a self-hosted vector database management system for AI Agent retrieval, MCP tools, and RAG testing."
+    />
+    <title>BYOB Documentation</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="#top" aria-label="BYOB documentation home">
+          <span class="brand-mark">B</span>
+          <span>
+            <strong>BYOB</strong>
+            <small>Self-hosted vector DB for AI Agents</small>
+          </span>
+        </a>
+        <nav class="nav" aria-label="Main navigation">
+          <a href="#overview">项目介绍</a>
+          <a href="#deploy">部署流程</a>
+          <a href="#mcp">MCP</a>
+          <a href="#api">API</a>
+          <a href="#production">生产建议</a>
+          <a href="https://github.com/SyndicateAgent/Byob">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section id="top" class="hero">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">BYOB Project Documentation</p>
+            <h1>给 AI Agent 使用的自部署向量数据库管理系统</h1>
+            <p class="lead">
+              BYOB 将文档导入、解析、切分、向量化、混合检索、重排、MCP 工具暴露和
+              RAG 效果测试整合到一套本地优先的管理系统中。
+            </p>
+            <div class="hero-actions" aria-label="Primary actions">
+              <a class="button primary" href="#deploy">开始部署</a>
+              <a class="button" href="https://github.com/SyndicateAgent/Byob">查看源码</a>
+            </div>
+          </div>
+          <div class="system-map" aria-label="BYOB service map">
+            <div class="map-node active">Console</div>
+            <div class="map-line"></div>
+            <div class="map-row">
+              <div class="map-node">FastAPI</div>
+              <div class="map-node">Worker</div>
+              <div class="map-node">MCP</div>
+            </div>
+            <div class="map-line"></div>
+            <div class="map-grid">
+              <div>PostgreSQL</div>
+              <div>Redis</div>
+              <div>Qdrant</div>
+              <div>MinIO</div>
+              <div>Embedding</div>
+              <div>Rerank</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="overview" class="section">
+        <div class="container two-column">
+          <div>
+            <p class="section-kicker">Overview</p>
+            <h2>项目介绍</h2>
+            <p>
+              BYOB 的定位不是 SaaS 平台，而是一套适合自部署的向量知识库系统。它帮助个人
+              或团队快速建立可由 AI Agent 调用的检索基础设施，并提供一个本地控制台来管理
+              知识库、文档、chunk、检索测试和 MCP 使用说明。
+            </p>
+            <p>
+              项目内置的 QA Agent 只用于快速验证 MCP-backed RAG 效果。它可以接入
+              OpenAI-compatible Chat Completions，也可以在未配置 LLM 时返回抽取式 Markdown
+              答案，方便检查召回质量。
+            </p>
+          </div>
+          <div class="card-list">
+            <article>
+              <h3>自部署优先</h3>
+              <p>依赖服务通过 Docker Compose 启动，API、Worker、MCP 和前端可按需独立运行。</p>
+            </article>
+            <article>
+              <h3>面向 Agent</h3>
+              <p>提供直接检索 API 和 MCP 工具，让 Agent 可以以工具形式访问知识库。</p>
+            </article>
+            <article>
+              <h3>可观察可测试</h3>
+              <p>提供检索控制台、QA Agent、健康检查、metrics，以及 MinIO/Qdrant Web UI 入口。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section muted">
+        <div class="container">
+          <p class="section-kicker">Capabilities</p>
+          <h2>核心能力</h2>
+          <div class="feature-grid">
+            <article>
+              <h3>知识库与文档管理</h3>
+              <p>创建知识库，批量导入文档，按文件名和 SHA-256 hash 自动跳过重复文件。</p>
+            </article>
+            <article>
+              <h3>解析与资源处理</h3>
+              <p>支持 Markdown、TXT、DOCX、PDF；PDF 默认使用 MinerU，图片资源保存到 MinIO。</p>
+            </article>
+            <article>
+              <h3>向量检索</h3>
+              <p>使用 Qdrant 存储向量，支持高级检索、多查询检索、metadata 和父级上下文。</p>
+            </article>
+            <article>
+              <h3>知识库治理</h3>
+              <p>导入时标注来源类型、权威等级和审核状态；正式检索默认只使用 published 文档。</p>
+            </article>
+            <article>
+              <h3>Embedding 与 Rerank</h3>
+              <p>默认通过 Infinity 运行 BGE embedding 和 reranker 服务，便于本地部署。</p>
+            </article>
+            <article>
+              <h3>MCP Server</h3>
+              <p>提供 stdio 和 Streamable HTTP transport，便于 MCP 客户端与 Agent 调用。</p>
+            </article>
+            <article>
+              <h3>富文本渲染</h3>
+              <p>控制台答案和 chunk 支持 Markdown、表格、公式、图片和安全 HTML 片段。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="deploy" class="section">
+        <div class="container">
+          <p class="section-kicker">Deployment</p>
+          <h2>本地部署流程</h2>
+          <div class="steps">
+            <article class="step">
+              <span>1</span>
+              <div>
+                <h3>准备环境</h3>
+                <p>安装 Docker、Python 3.12+、uv、Node.js 20+ 和 Git。</p>
+                <pre><code>python --version
+uv --version
+node --version
+docker compose version</code></pre>
+              </div>
+            </article>
+            <article class="step">
+              <span>2</span>
+              <div>
+                <h3>复制环境变量</h3>
+                <p>从示例文件创建本地配置，生产环境必须替换默认密钥和服务凭据。</p>
+                <pre><code>Copy-Item .env.example .env</code></pre>
+              </div>
+            </article>
+            <article class="step">
+              <span>3</span>
+              <div>
+                <h3>启动基础设施</h3>
+                <p>启动 PostgreSQL、Redis、Qdrant、MinIO、embedding 和 rerank 服务。</p>
+                <pre><code>docker compose up -d
+docker compose ps</code></pre>
+              </div>
+            </article>
+            <article class="step">
+              <span>4</span>
+              <div>
+                <h3>安装依赖并迁移数据库</h3>
+                <p>安装 Python 依赖并执行 Alembic 迁移。</p>
+                <pre><code>uv sync --extra dev
+uv run alembic upgrade head</code></pre>
+              </div>
+            </article>
+            <article class="step">
+              <span>5</span>
+              <div>
+                <h3>创建管理员</h3>
+                <p>创建第一个本地管理账号。</p>
+                <pre><code>$env:BYOB_ADMIN_EMAIL = "admin@example.com"
+$env:BYOB_ADMIN_PASSWORD = "replace-with-a-strong-password"
+uv run python -m api.scripts.seed_admin</code></pre>
+              </div>
+            </article>
+            <article class="step">
+              <span>6</span>
+              <div>
+                <h3>启动后端与 Worker</h3>
+                <p>API 和文档导入 Worker 建议放在不同终端运行。</p>
+                <pre><code>uv run uvicorn api.app.main:app --reload
+uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO</code></pre>
+              </div>
+            </article>
+            <article class="step">
+              <span>7</span>
+              <div>
+                <h3>启动前端控制台</h3>
+                <p>默认访问地址为 http://localhost:3000。</p>
+                <pre><code>Set-Location frontend
+npm install
+npm run dev</code></pre>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section muted">
+        <div class="container">
+          <p class="section-kicker">Configuration</p>
+          <h2>关键环境变量</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>变量</th>
+                  <th>用途</th>
+                  <th>默认值</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>DATABASE_URL</code></td>
+                  <td>PostgreSQL 连接地址</td>
+                  <td><code>postgresql+asyncpg://byob:byob@localhost:5432/byob</code></td>
+                </tr>
+                <tr>
+                  <td><code>QDRANT_URL</code></td>
+                  <td>Qdrant HTTP 地址</td>
+                  <td><code>http://localhost:6333</code></td>
+                </tr>
+                <tr>
+                  <td><code>MINIO_ENDPOINT_URL</code></td>
+                  <td>MinIO API 地址</td>
+                  <td><code>http://localhost:9000</code></td>
+                </tr>
+                <tr>
+                  <td><code>EMBEDDING_ENDPOINT_URL</code></td>
+                  <td>Embedding 服务地址</td>
+                  <td><code>http://localhost:7997</code></td>
+                </tr>
+                <tr>
+                  <td><code>RERANK_ENDPOINT_URL</code></td>
+                  <td>Rerank 服务地址</td>
+                  <td><code>http://localhost:7998</code></td>
+                </tr>
+                <tr>
+                  <td><code>MCP_SERVER_URL</code></td>
+                  <td>QA Agent 使用的 MCP HTTP 地址</td>
+                  <td><code>http://127.0.0.1:8010/mcp</code></td>
+                </tr>
+                <tr>
+                  <td><code>AGENT_LLM_ENDPOINT_URL</code></td>
+                  <td>可选 OpenAI-compatible Chat Completions 地址</td>
+                  <td>未启用</td>
+                </tr>
+                <tr>
+                  <td><code>AGENT_MAX_IMAGE_ASSETS</code></td>
+                  <td>QA Agent 每次最多传给多模态模型的图片数量</td>
+                  <td><code>3</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="mcp" class="section">
+        <div class="container two-column">
+          <div>
+            <p class="section-kicker">MCP and RAG Test</p>
+            <h2>MCP 与 QA Agent</h2>
+            <p>
+              BYOB MCP Server 暴露知识库列表、文档列表、普通检索、高级检索、多检索、
+              chunk 获取以及 document asset 获取工具。召回结果会带出 chunk 中引用的图片/
+              文件 manifest，控制台 QA Agent 可以把图片作为多模态输入交给 LLM。
+              大多数 MCP 客户端使用 stdio transport，控制台 QA Agent 使用 Streamable HTTP transport。
+            </p>
+            <pre><code>uv run python -m api.app.mcp_server
+
+uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1 --port 8010</code></pre>
+          </div>
+          <div class="panel">
+            <h3>QA Agent 流程</h3>
+            <ol>
+              <li>在控制台创建知识库并导入文档。</li>
+              <li>等待 Worker 完成解析、chunk 和 embedding。</li>
+              <li>打开 <code>/agent</code> 页面输入问题。</li>
+              <li>Agent 通过 MCP 调用高级检索工具。</li>
+              <li>如果命中图片 asset，Agent 通过 MCP 拉取图片给多模态模型查看。</li>
+              <li>有 LLM 时生成答案，无 LLM 时返回抽取式 Markdown，并保留图片/文件链接。</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section id="api" class="section muted">
+        <div class="container">
+          <p class="section-kicker">API Surface</p>
+          <h2>主要接口与工具</h2>
+          <div class="api-grid">
+            <article>
+              <h3>管理</h3>
+              <ul>
+                <li><code>POST /api/v1/auth/login</code></li>
+                <li><code>GET /api/v1/users</code></li>
+                <li><code>POST /api/v1/users</code></li>
+              </ul>
+            </article>
+            <article>
+              <h3>知识库与文档</h3>
+              <ul>
+                <li><code>GET /api/v1/knowledge-bases</code></li>
+                <li><code>POST /api/v1/knowledge-bases/{kb_id}/documents/batch</code></li>
+                <li><code>GET /api/v1/documents/{document_id}/chunks</code></li>
+              </ul>
+            </article>
+            <article>
+              <h3>检索</h3>
+              <ul>
+                <li><code>POST /api/v1/retrieval/search</code></li>
+                <li><code>POST /api/v1/retrieval/search/advanced</code></li>
+                <li><code>POST /api/v1/retrieval/multi-search</code></li>
+              </ul>
+            </article>
+            <article>
+              <h3>MCP</h3>
+              <ul>
+                <li><code>list_knowledge_bases</code></li>
+                <li><code>advanced_search_knowledge_base</code></li>
+                <li><code>get_document_chunks</code></li>
+                <li><code>get_document_asset</code></li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="production" class="section">
+        <div class="container two-column">
+          <div>
+            <p class="section-kicker">Production Notes</p>
+            <h2>生产部署建议</h2>
+            <p>
+              当前 Compose 文件主要用于依赖服务。长期自部署时，建议将 API、Worker、MCP
+              Server 和前端纳入 systemd、Supervisor、PM2 或容器平台，并使用反向代理提供
+              HTTPS、访问日志和鉴权策略。
+            </p>
+          </div>
+          <ul class="check-list">
+            <li>替换 <code>JWT_SECRET_KEY</code>、PostgreSQL 密码和 MinIO 凭据。</li>
+            <li>为 PostgreSQL、Qdrant、MinIO、Redis 配置持久化和备份。</li>
+            <li>只在可信网络暴露数据库、Redis、Qdrant、MinIO 和 MCP HTTP。</li>
+            <li>正确设置 <code>CORS_ALLOWED_ORIGINS</code> 和前端公开 URL。</li>
+            <li>监控 <code>/healthz</code>、<code>/metrics</code>、Worker 日志和存储容量。</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section muted">
+        <div class="container">
+          <p class="section-kicker">English Summary</p>
+          <h2>BYOB in English</h2>
+          <p>
+            BYOB is a self-hosted vector database management system for AI Agent retrieval.
+            It provides document ingestion, asset storage, chunking, embeddings, Qdrant-backed
+            search, reranking, MCP tools, and a local console QA Agent for RAG testing. The
+            project is designed for trusted self-hosted environments rather than public SaaS
+            operation.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <span>BYOB Documentation</span>
+        <a href="https://github.com/SyndicateAgent/Byob">github.com/SyndicateAgent/Byob</a>
+      </div>
+    </footer>
+  </body>
+</html>
