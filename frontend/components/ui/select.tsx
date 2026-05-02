@@ -196,7 +196,7 @@ export function Select({ className, children, value, defaultValue, onChange, dis
           <div
             ref={panelRef}
             className={cn(
-              "animate-soft-pop fixed z-[80] overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_24px_60px_rgba(15,23,42,0.16)] backdrop-blur",
+              "animate-soft-pop fixed z-[120] overflow-hidden rounded-xl border border-slate-200 bg-white/95 shadow-[0_24px_60px_rgba(15,23,42,0.16)] backdrop-blur",
               openDirection === "up" ? "origin-bottom" : "origin-top",
             )}
             style={panelStyle}

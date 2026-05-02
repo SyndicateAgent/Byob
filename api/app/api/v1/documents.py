@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.app.deps import get_current_user, get_current_user_or_query_token, get_db_session
+from api.app.models.document import Document
 from api.app.schemas.auth import CurrentUser
 from api.app.schemas.document import (
     ChunkListResponse,
@@ -16,6 +17,7 @@ from api.app.schemas.document import (
     DocumentBatchUploadItem,
     DocumentBatchUploadResponse,
     DocumentContentResponse,
+    DocumentContentUpdateRequest,
     DocumentGovernanceInput,
     DocumentGovernanceUpdateRequest,
     DocumentListResponse,
@@ -32,7 +34,9 @@ from api.app.services.document_service import (
     create_text_document,
     create_url_document,
     delete_document,
+    document_generated_object_prefix,
     document_governance_payload,
+    document_source_object_key,
     find_duplicate_document,
     get_document,
     get_document_asset,
@@ -45,6 +49,7 @@ from api.app.services.document_service import (
     list_documents,
     parsed_content_metadata,
     reset_document_for_reprocess,
+    update_document_content_source,
     update_document_governance,
 )
 from api.app.services.knowledge_base_service import get_knowledge_base
@@ -95,6 +100,19 @@ async def clear_retrieval_cache(request: Request) -> None:
     if redis_client is None or not hasattr(redis_client, "delete_prefix"):
         return
     await redis_client.delete_prefix("retrieval:")
+
+
+async def delete_generated_document_objects(request: Request, document: Document) -> None:
+    """Delete parsed content snapshots and extracted assets for one document."""
+
+    await request.app.state.minio_client.delete_prefix(document_generated_object_prefix(document))
+
+
+async def delete_all_document_objects(request: Request, document: Document) -> None:
+    """Delete original and generated MinIO objects for one document."""
+
+    await delete_generated_document_objects(request, document)
+    await request.app.state.minio_client.delete_object(document_source_object_key(document))
 
 
 def skipped_upload_item(
@@ -526,6 +544,43 @@ async def get_document_content_endpoint(
     )
 
 
+@router.patch("/documents/{document_id}/content", response_model=DocumentResponse)
+async def update_document_content_endpoint(
+    document_id: UUID,
+    payload: DocumentContentUpdateRequest,
+    request: Request,
+    current_user: CurrentUserDep,
+    session: DbSession,
+) -> DocumentResponse:
+    """Replace editable source content and enqueue a fresh ingestion run."""
+
+    document = await get_document(session, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    knowledge_base = await get_knowledge_base(session, document.kb_id)
+    if knowledge_base is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+
+    point_ids = await list_document_qdrant_point_ids(session, document)
+    await request.app.state.qdrant_client.delete_points(
+        knowledge_base.qdrant_collection,
+        point_ids,
+    )
+    await delete_all_document_objects(request, document)
+    updated_document = await update_document_content_source(
+        session,
+        document,
+        payload,
+        actor=current_actor(current_user),
+    )
+    enqueue_document(updated_document.id)
+    await clear_retrieval_cache(request)
+    return DocumentResponse.model_validate(updated_document)
+
+
 @router.get("/documents/{document_id}/assets", response_model=DocumentAssetListResponse)
 async def list_document_assets_endpoint(
     document_id: UUID,
@@ -596,6 +651,7 @@ async def delete_document_endpoint(
         knowledge_base.qdrant_collection,
         point_ids,
     )
+    await delete_all_document_objects(request, document)
     await delete_document(session, document, actor=current_actor(current_user))
     await clear_retrieval_cache(request)
 
@@ -623,6 +679,7 @@ async def reprocess_document_endpoint(
         knowledge_base.qdrant_collection,
         point_ids,
     )
+    await delete_generated_document_objects(request, document)
     reset_document = await reset_document_for_reprocess(
         session,
         document,

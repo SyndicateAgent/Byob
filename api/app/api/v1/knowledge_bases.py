@@ -13,6 +13,7 @@ from api.app.schemas.knowledge_base import (
     KnowledgeBaseStatsResponse,
     KnowledgeBaseUpdateRequest,
 )
+from api.app.services.document_service import knowledge_base_object_prefix
 from api.app.services.knowledge_base_service import (
     create_knowledge_base,
     delete_knowledge_base,
@@ -97,6 +98,7 @@ async def update_knowledge_base_endpoint(
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge_base_endpoint(
     kb_id: UUID,
+    request: Request,
     current_user: CurrentUserDep,
     session: DbSession,
 ) -> None:
@@ -108,7 +110,14 @@ async def delete_knowledge_base_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Knowledge base not found",
         )
+    await request.app.state.minio_client.delete_prefix(
+        knowledge_base_object_prefix(knowledge_base.id)
+    )
+    await request.app.state.qdrant_client.delete_collection(knowledge_base.qdrant_collection)
     await delete_knowledge_base(session, knowledge_base)
+    redis_client = getattr(request.app.state, "redis_client", None)
+    if redis_client is not None and hasattr(redis_client, "delete_prefix"):
+        await redis_client.delete_prefix("retrieval:")
 
 
 @router.get("/{kb_id}/stats", response_model=KnowledgeBaseStatsResponse)

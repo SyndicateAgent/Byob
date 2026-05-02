@@ -1,7 +1,27 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, CircleAlert, Clock3, Copy, FileText, FileUp, History, RefreshCcw, ShieldCheck, Trash2, Type, Upload } from "lucide-react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  CircleAlert,
+  Clock3,
+  Copy,
+  Database,
+  FileText,
+  FileUp,
+  History,
+  Layers3,
+  ListFilter,
+  RefreshCcw,
+  Search,
+  ShieldCheck,
+  Trash2,
+  Type,
+  Upload,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DocumentContentViewer } from "@/components/document-content-viewer";
 import { Button } from "@/components/ui/button";
@@ -17,9 +37,21 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { ApiError, apiRequest } from "@/lib/api";
 import { mergeChunkContent } from "@/lib/chunk-overlap";
 import { formatDate, formatNumber, statusVariant } from "@/lib/utils";
-import type { ChunkItem, DocumentAuditLogItem, DocumentBatchUploadResponse, DocumentContent, DocumentItem, DocumentVersionItem, KnowledgeBase } from "@/lib/types";
+import type {
+  ChunkItem,
+  DocumentAuditLogItem,
+  DocumentBatchUploadResponse,
+  DocumentContent,
+  DocumentItem,
+  DocumentVersionItem,
+  KnowledgeBase,
+} from "@/lib/types";
 
 type UploadMode = "text" | "files" | null;
+type DocumentFilter = "all" | "published" | "reviewed" | "draft" | "deprecated" | "active" | "failed";
+type DocumentWorkspaceView = "overview" | "import" | "library" | "activity";
+type GovernanceWorkspaceView = "overview" | "policy" | "content" | "monitor";
+type GovernanceContentSource = "parsed" | "chunks" | "empty";
 type IngestionProgress = {
   stage?: string;
   progress?: number;
@@ -46,6 +78,15 @@ const REVIEW_STATUS_OPTIONS = [
   { value: "published", label: "Published" },
   { value: "deprecated", label: "Deprecated" },
 ] as const;
+const DOCUMENT_FILTERS: { value: DocumentFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "published", label: "Published" },
+  { value: "reviewed", label: "Reviewed" },
+  { value: "draft", label: "Draft" },
+  { value: "deprecated", label: "Deprecated" },
+  { value: "active", label: "Active" },
+  { value: "failed", label: "Failed" },
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -123,6 +164,37 @@ function authorityLabel(level: number) {
   return labels[level] ?? `L${level}`;
 }
 
+function editableFileType(fileType: string | null) {
+  return fileType === "txt" ? "txt" : "md";
+}
+
+function governanceContentSourceLabel(source: GovernanceContentSource) {
+  if (source === "parsed") return "Parsed snapshot";
+  if (source === "chunks") return "Chunk fallback";
+  return "No content loaded";
+}
+
+function matchesDocumentFilter(document: DocumentItem, filter: DocumentFilter) {
+  if (filter === "all") return true;
+  if (filter === "active") return isActiveDocument(document);
+  if (filter === "failed") return document.status.toLowerCase() === "failed";
+  return document.review_status === filter;
+}
+
+function searchableDocumentText(document: DocumentItem) {
+  return [
+    document.name,
+    document.source_type,
+    document.file_type ?? "",
+    document.status,
+    document.review_status,
+    governanceSourceLabel(document.governance_source_type),
+    document.error_message ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
 function documentProgress(document: DocumentItem, optimisticValue: number | undefined) {
   const status = document.status.toLowerCase();
   const backendProgress = backendDocumentProgress(document);
@@ -180,6 +252,10 @@ export default function DocumentsPage() {
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [kbId, setKbId] = useState("");
+  const [activeView, setActiveView] = useState<DocumentWorkspaceView>("overview");
+  const [documentSearch, setDocumentSearch] = useState("");
+  const [documentFilter, setDocumentFilter] = useState<DocumentFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -200,15 +276,23 @@ export default function DocumentsPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewCopied, setPreviewCopied] = useState(false);
   const [governanceDocument, setGovernanceDocument] = useState<DocumentItem | null>(null);
+  const [governanceView, setGovernanceView] = useState<GovernanceWorkspaceView>("overview");
   const [governanceForm, setGovernanceForm] = useState({
     governance_source_type: "",
     authority_level: "",
     review_status: "",
     change_summary: "",
   });
+  const [contentForm, setContentForm] = useState({
+    content: "",
+    file_type: "md",
+    change_summary: "",
+  });
+  const [governanceContentSource, setGovernanceContentSource] = useState<GovernanceContentSource>("empty");
   const [versions, setVersions] = useState<DocumentVersionItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<DocumentAuditLogItem[]>([]);
   const [governanceLoading, setGovernanceLoading] = useState(false);
+  const [contentSaving, setContentSaving] = useState(false);
   const [governanceError, setGovernanceError] = useState<string | null>(null);
 
   const governanceReady = Boolean(governanceSourceType && authorityLevel && reviewStatus);
@@ -227,11 +311,57 @@ export default function DocumentsPage() {
     setDocuments(response.data);
   }
 
+  function selectKnowledgeBase(nextKbId: string) {
+    setKbId(nextKbId);
+    setDocumentSearch("");
+    setDocumentFilter("all");
+    setSourceFilter("all");
+  }
+
   const activeDocuments = useMemo(() => documents.filter(isActiveDocument), [documents]);
+  const documentStats = useMemo(() => {
+    const byFilter = DOCUMENT_FILTERS.reduce(
+      (counts, filter) => ({
+        ...counts,
+        [filter.value]: documents.filter((document) => matchesDocumentFilter(document, filter.value)).length,
+      }),
+      {} as Record<DocumentFilter, number>,
+    );
+    return {
+      byFilter,
+      total: documents.length,
+      chunks: documents.reduce((sum, document) => sum + document.chunk_count, 0),
+      active: documents.filter(isActiveDocument).length,
+      failed: documents.filter((document) => document.status.toLowerCase() === "failed").length,
+      published: documents.filter((document) => document.review_status === "published").length,
+      draftLike: documents.filter((document) => ["draft", "reviewed"].includes(document.review_status)).length,
+    };
+  }, [documents]);
+  const sourceOptions = useMemo(
+    () =>
+      Array.from(new Set(documents.map((document) => document.governance_source_type)))
+        .filter(Boolean)
+        .sort(),
+    [documents],
+  );
+  const filteredDocuments = useMemo(() => {
+    const query = documentSearch.trim().toLowerCase();
+    return documents.filter((document) => {
+      if (!matchesDocumentFilter(document, documentFilter)) return false;
+      if (sourceFilter !== "all" && document.governance_source_type !== sourceFilter) return false;
+      if (query && !searchableDocumentText(document).includes(query)) return false;
+      return true;
+    });
+  }, [documents, documentFilter, documentSearch, sourceFilter]);
+  const currentKnowledgeBase = useMemo(() => kbs.find((kb) => kb.id === kbId) ?? null, [kbId, kbs]);
   const latestActiveDocument = activeDocuments[0];
   const latestProgress = latestActiveDocument
     ? documentProgress(latestActiveDocument, progressByRun[documentProgressKey(latestActiveDocument)])
     : 0;
+  const governanceProgress = governanceDocument
+    ? documentProgress(governanceDocument, progressByRun[documentProgressKey(governanceDocument)])
+    : 0;
+  const governanceIngestionProgress = governanceDocument ? documentIngestionProgress(governanceDocument) : null;
 
   useEffect(() => {
     writeStoredProgress(progressByRun);
@@ -308,6 +438,7 @@ export default function DocumentsPage() {
       setName("");
       setContent("");
       await loadDocuments();
+      setActiveView("activity");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -353,6 +484,7 @@ export default function DocumentsPage() {
       setFiles([]);
       setFileInputKey((current) => current + 1);
       await loadDocuments();
+      setActiveView("activity");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Batch upload failed");
     } finally {
@@ -370,6 +502,7 @@ export default function DocumentsPage() {
       });
       setProgressByRun((current) => ({ ...current, [documentProgressKey(document)]: 18 }));
       await loadDocuments();
+      setActiveView("activity");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reprocess failed");
     }
@@ -428,14 +561,21 @@ export default function DocumentsPage() {
     }
   }
 
-  async function openGovernance(document: DocumentItem) {
+  async function openGovernance(document: DocumentItem, nextView: GovernanceWorkspaceView = "overview") {
     setGovernanceDocument(document);
+    setGovernanceView(nextView);
     setGovernanceForm({
       governance_source_type: document.governance_source_type,
       authority_level: String(document.authority_level),
       review_status: document.review_status,
       change_summary: "",
     });
+    setContentForm({
+      content: "",
+      file_type: editableFileType(document.file_type),
+      change_summary: "",
+    });
+    setGovernanceContentSource("empty");
     setVersions([]);
     setAuditLogs([]);
     setGovernanceError(null);
@@ -447,6 +587,26 @@ export default function DocumentsPage() {
       ]);
       setVersions(versionResponse.data);
       setAuditLogs(auditResponse.data);
+      try {
+        const contentResponse = await apiRequest<DocumentContent>(`/api/v1/documents/${document.id}/content`);
+        setContentForm((current) => ({
+          ...current,
+          content: contentResponse.content,
+          file_type: contentResponse.content_type.includes("text/plain") ? "txt" : editableFileType(document.file_type),
+        }));
+        setGovernanceContentSource("parsed");
+      } catch (contentError) {
+        if (!(contentError instanceof ApiError && contentError.status === 404)) {
+          throw contentError;
+        }
+        const chunkResponse = await apiRequest<{ data: ChunkItem[] }>(`/api/v1/documents/${document.id}/chunks`);
+        setContentForm((current) => ({
+          ...current,
+          content: mergeChunkContent(chunkResponse.data).content,
+          file_type: editableFileType(document.file_type),
+        }));
+        setGovernanceContentSource(chunkResponse.data.length > 0 ? "chunks" : "empty");
+      }
     } catch (err) {
       setGovernanceError(err instanceof Error ? err.message : "Load governance history failed");
     } finally {
@@ -472,7 +632,7 @@ export default function DocumentsPage() {
       setGovernanceDocument(updated);
       setGovernanceForm((current) => ({ ...current, change_summary: "" }));
       await loadDocuments();
-      await openGovernance(updated);
+      await openGovernance(updated, "monitor");
     } catch (err) {
       setGovernanceError(err instanceof Error ? err.message : "Update governance failed");
     } finally {
@@ -480,151 +640,413 @@ export default function DocumentsPage() {
     }
   }
 
+  async function updateDocumentContent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!governanceDocument) return;
+    const accepted = await confirm({
+      title: "Save edited content?",
+      description: "BYOB will replace the retrievable source text, delete old vectors, and queue this document for re-indexing.",
+      confirmLabel: "Save and re-index",
+      cancelLabel: "Cancel",
+    });
+    if (!accepted) return;
+    setGovernanceError(null);
+    setContentSaving(true);
+    try {
+      const updated = await apiRequest<DocumentItem>(`/api/v1/documents/${governanceDocument.id}/content`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          content: contentForm.content,
+          file_type: contentForm.file_type,
+          change_summary: contentForm.change_summary || null,
+        }),
+      });
+      setGovernanceDocument(updated);
+      setProgressByRun((current) => ({ ...current, [documentProgressKey(updated)]: 18 }));
+      setContentForm((current) => ({ ...current, change_summary: "" }));
+      await loadDocuments();
+      await openGovernance(updated, "monitor");
+    } catch (err) {
+      setGovernanceError(err instanceof Error ? err.message : "Update content failed");
+    } finally {
+      setContentSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
+        className="flex-col items-start sm:flex-row sm:items-end"
         title="Documents"
-        description="Upload content and watch parsing, embedding, and indexing progress in real time."
+        description="Operate source ingestion, governance, and vector indexing from one production RAG workspace."
         action={
-          <div className="w-64 space-y-1">
-          <Label>Knowledge base</Label>
-          <Select value={kbId} onChange={(event) => setKbId(event.target.value)}>
-            {kbs.length === 0 && <option value="">No knowledge bases</option>}
-            {kbs.map((kb) => (
-              <option key={kb.id} value={kb.id}>
-                {kb.name}
-              </option>
-            ))}
-          </Select>
+          <div className="w-full rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:w-72">
+            <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase text-slate-500">
+              <Database className="h-3.5 w-3.5" /> Knowledge base
+            </div>
+            <Select value={kbId} onChange={(event) => selectKnowledgeBase(event.target.value)}>
+              {kbs.length === 0 && <option value="">No knowledge bases</option>}
+              {kbs.map((kb) => (
+                <option key={kb.id} value={kb.id}>
+                  {kb.name}
+                </option>
+              ))}
+            </Select>
           </div>
         }
       />
       {error && <p className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-      {(uploading || latestActiveDocument) && (
-        <Card className="animate-soft-pop border-cyan-100 bg-cyan-50/70">
+      <Card className="animate-fade-up p-2">
+        <div className="grid gap-2 md:grid-cols-4">
+          <WorkspaceNavButton
+            active={activeView === "overview"}
+            icon={<Layers3 className="h-4 w-4" />}
+            title="Overview"
+            detail="Workspace status"
+            onClick={() => setActiveView("overview")}
+          />
+          <WorkspaceNavButton
+            active={activeView === "import"}
+            icon={<Upload className="h-4 w-4" />}
+            title="Import"
+            detail="Add sources"
+            onClick={() => setActiveView("import")}
+          />
+          <WorkspaceNavButton
+            active={activeView === "library"}
+            icon={<ListFilter className="h-4 w-4" />}
+            title="Library"
+            detail="Manage documents"
+            onClick={() => setActiveView("library")}
+          />
+          <WorkspaceNavButton
+            active={activeView === "activity"}
+            icon={<Activity className="h-4 w-4" />}
+            title="Activity"
+            detail="Track indexing"
+            onClick={() => setActiveView("activity")}
+          />
+        </div>
+      </Card>
+
+      {activeView === "overview" && (
+      <>
+      <Card className="animate-fade-up overflow-hidden p-0">
+        <div className="border-b border-slate-200 bg-white px-6 py-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-cyan-200 bg-white text-cyan-700 shadow-sm">
-                {latestActiveDocument ? <Clock3 className="h-5 w-5" /> : <Upload className="h-5 w-5" />}
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
+                <Layers3 className="h-5 w-5" />
               </div>
               <div>
-                <p className="font-semibold text-cyan-950">
-                  {latestActiveDocument ? latestActiveDocument.name : uploading === "files" ? "Uploading files" : "Uploading text"}
-                </p>
-                <p className="text-sm text-cyan-700">
-                  {latestActiveDocument
-                    ? documentStage(latestActiveDocument, latestProgress)
-                    : uploading === "files"
-                      ? `Queueing ${formatNumber(files.length)} files`
-                      : "Creating the document record and queueing ingestion"}
-                </p>
+                <p className="text-sm font-medium uppercase text-slate-500">Workspace overview</p>
+                <h2 className="text-lg font-semibold text-slate-950">
+                  {currentKnowledgeBase?.name ?? "Select a knowledge base"}
+                </h2>
+                <p className="text-sm text-slate-500">Published sources are available to Agent retrieval by default.</p>
               </div>
             </div>
-            <div className="w-full lg:max-w-md">
-              <ProgressBar
-                value={latestActiveDocument ? latestProgress : uploadProgress}
-                tone={latestActiveDocument ? documentProgressTone(latestActiveDocument) : "blue"}
-                indeterminate={Boolean(latestActiveDocument && latestProgress < 100)}
-                label={latestActiveDocument ? "Embedding pipeline" : "Upload request"}
-                detail={latestActiveDocument ? latestActiveDocument.status : "Sending to API"}
-              />
+            <Badge variant={activeDocuments.length > 0 ? "info" : documentStats.failed > 0 ? "warning" : "success"}>
+              {activeDocuments.length > 0
+                ? `${formatNumber(activeDocuments.length)} indexing`
+                : documentStats.failed > 0
+                  ? `${formatNumber(documentStats.failed)} failed`
+                  : "healthy"}
+            </Badge>
+          </div>
+        </div>
+        <div className="grid gap-0 divide-y divide-slate-100 bg-slate-50/50 sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-5">
+          <MetricTile label="Documents" value={formatNumber(documentStats.total)} detail={`${formatNumber(documentStats.chunks)} chunks`} />
+          <MetricTile label="Published" value={formatNumber(documentStats.published)} detail="retrieval ready" tone="success" />
+          <MetricTile label="Review queue" value={formatNumber(documentStats.draftLike)} detail="draft or reviewed" tone="warning" />
+          <MetricTile label="Indexing" value={formatNumber(documentStats.active)} detail="worker activity" tone="info" />
+          <MetricTile label="Failed" value={formatNumber(documentStats.failed)} detail="requires action" tone={documentStats.failed > 0 ? "danger" : "muted"} />
+        </div>
+      </Card>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <WorkspaceModuleCard
+          icon={<Upload className="h-5 w-5" />}
+          title="Import sources"
+          detail="Create text documents or batch import files with a required governance policy."
+          meta={governanceReady ? "Policy ready" : "Policy required"}
+          onClick={() => setActiveView("import")}
+        />
+        <WorkspaceModuleCard
+          icon={<ListFilter className="h-5 w-5" />}
+          title="Document library"
+          detail="Search, preview, govern, reprocess, and delete indexed source documents."
+          meta={`${formatNumber(filteredDocuments.length)} visible`}
+          onClick={() => setActiveView("library")}
+        />
+        <WorkspaceModuleCard
+          icon={<Activity className="h-5 w-5" />}
+          title="Indexing activity"
+          detail="Monitor running ingestion jobs and inspect failed document pipelines."
+          meta={activeDocuments.length > 0 ? `${formatNumber(activeDocuments.length)} running` : "Idle"}
+          onClick={() => setActiveView("activity")}
+        />
+      </div>
+      </>
+      )}
+
+      {activeView === "import" && importSummary && <p className="rounded bg-emerald-50 p-3 text-sm text-emerald-700">{importSummary}</p>}
+
+      {activeView === "import" && (
+      <Card className="animate-fade-up overflow-hidden p-0">
+        <div className="border-b border-slate-200 px-6 py-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle>Ingestion workbench</CardTitle>
+              <CardDescription>Set source governance once, then import text or files into the selected knowledge base.</CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => setActiveView("overview")} className="gap-2">
+                <ArrowLeft className="h-4 w-4" /> Overview
+              </Button>
+              <Badge variant={governanceReady ? "success" : "warning"}>
+                {governanceReady ? "policy ready" : "policy required"}
+              </Badge>
             </div>
           </div>
-          {latestActiveDocument && (
-            <StepRail className="mt-4" steps={progressSteps(latestActiveDocument, latestProgress)} />
-          )}
-        </Card>
+        </div>
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="grid divide-y divide-slate-100 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+            <form className="space-y-4 p-6" onSubmit={uploadText}>
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 text-blue-700">
+                  <Type className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-950">Direct text</p>
+                  <p className="text-sm text-slate-500">Create a managed text document.</p>
+                </div>
+              </div>
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Document name"
+                required
+              />
+              <Textarea
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                placeholder="Content"
+                required
+                className="min-h-40"
+              />
+              <Button type="submit" disabled={!kbId || uploading !== null || !governanceReady} className="gap-2">
+                <Upload className="h-4 w-4" /> {uploading === "text" ? "Queueing" : "Upload text"}
+              </Button>
+            </form>
+
+            <form className="space-y-4 p-6" onSubmit={uploadFiles}>
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-700">
+                  <FileUp className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-950">Batch files</p>
+                  <p className="text-sm text-slate-500">Import PDF, DOCX, Markdown, TXT, or HTML.</p>
+                </div>
+              </div>
+              <Input
+                key={fileInputKey}
+                type="file"
+                multiple
+                onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+                required
+              />
+              {files.length > 0 && (
+                <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                  {files.slice(0, 4).map((file) => (
+                    <Badge key={`${file.name}-${file.size}`} variant="muted" className="max-w-48 truncate">
+                      {file.name}
+                    </Badge>
+                  ))}
+                  {files.length > 4 && <Badge variant="muted">+{formatNumber(files.length - 4)} more</Badge>}
+                </div>
+              )}
+              <Button type="submit" disabled={!kbId || files.length === 0 || uploading !== null || !governanceReady} className="gap-2">
+                <Upload className="h-4 w-4" /> {uploading === "files" ? "Queueing" : "Import files"}
+              </Button>
+            </form>
+          </div>
+
+          <aside className="border-t border-slate-200 bg-slate-50/70 p-6 lg:border-l lg:border-t-0">
+            <div className="space-y-5">
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700">
+                    <ShieldCheck className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-950">Import policy</p>
+                    <p className="text-sm text-slate-500">Applied to every new source.</p>
+                  </div>
+                </div>
+                <GovernanceFields
+                  sourceType={governanceSourceType}
+                  authorityLevel={authorityLevel}
+                  reviewStatus={reviewStatus}
+                  onSourceTypeChange={setGovernanceSourceType}
+                  onAuthorityLevelChange={setAuthorityLevel}
+                  onReviewStatusChange={setReviewStatus}
+                  compact
+                />
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
+                    <Activity className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-950">Track after queueing</p>
+                    <p className="mt-1 text-sm text-slate-500">Open Activity to monitor parsing, embedding, and vector indexing.</p>
+                    <Button type="button" variant="outline" onClick={() => setActiveView("activity")} className="mt-3 gap-2">
+                      Open activity <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </Card>
       )}
-      {importSummary && <p className="rounded bg-emerald-50 p-3 text-sm text-emerald-700">{importSummary}</p>}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="animate-fade-up hover:shadow-md">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
-                <Type className="h-4 w-4" />
-              </div>
-              <div>
-                <CardTitle>Upload text</CardTitle>
-                <CardDescription>Send text directly to the ingestion pipeline.</CardDescription>
-              </div>
+      {activeView === "activity" && (
+      <Card className="animate-fade-up overflow-hidden p-0">
+        <CardHeader className="mb-0 border-b border-slate-200 px-6 py-5 sm:flex sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
+              <Activity className="h-4 w-4" />
             </div>
-          </CardHeader>
-          <form className="space-y-3" onSubmit={uploadText}>
-            <Input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Document name"
-              required
-            />
-            <Textarea
-              value={content}
-              onChange={(event) => setContent(event.target.value)}
-              placeholder="Content"
-              required
-            />
-            <GovernanceFields
-              sourceType={governanceSourceType}
-              authorityLevel={authorityLevel}
-              reviewStatus={reviewStatus}
-              onSourceTypeChange={setGovernanceSourceType}
-              onAuthorityLevelChange={setAuthorityLevel}
-              onReviewStatusChange={setReviewStatus}
-            />
-            <Button type="submit" disabled={!kbId || uploading !== null || !governanceReady} className="gap-2">
-              <Upload className="h-4 w-4" /> {uploading === "text" ? "Queueing..." : "Upload text"}
-            </Button>
-          </form>
-        </Card>
-
-        <Card className="animate-fade-up hover:shadow-md" style={{ animationDelay: "80ms" }}>
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
-                <FileUp className="h-4 w-4" />
-              </div>
-              <div>
-                <CardTitle>Batch import files</CardTitle>
-                <CardDescription>PDF, DOCX, Markdown, TXT, and HTML are stored in MinIO; duplicates are skipped.</CardDescription>
-              </div>
+            <div>
+              <CardTitle>Indexing activity</CardTitle>
+              <CardDescription>Track running ingestion jobs and identify documents that need operator action.</CardDescription>
             </div>
-          </CardHeader>
-          <form className="space-y-3" onSubmit={uploadFiles}>
-            <Input
-              key={fileInputKey}
-              type="file"
-              multiple
-              onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-              required
-            />
-            {files.length > 0 && (
-              <p className="text-xs text-slate-500">
-                {formatNumber(files.length)} selected
-              </p>
-            )}
-            <GovernanceFields
-              sourceType={governanceSourceType}
-              authorityLevel={authorityLevel}
-              reviewStatus={reviewStatus}
-              onSourceTypeChange={setGovernanceSourceType}
-              onAuthorityLevelChange={setAuthorityLevel}
-              onReviewStatusChange={setReviewStatus}
-            />
-            <Button type="submit" disabled={!kbId || files.length === 0 || uploading !== null || !governanceReady} className="gap-2">
-              <Upload className="h-4 w-4" /> {uploading === "files" ? "Queueing..." : "Import files"}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => setActiveView("overview")} className="gap-2">
+              <ArrowLeft className="h-4 w-4" /> Overview
             </Button>
-          </form>
-        </Card>
-      </div>
-
-      <Card className="animate-fade-up p-0" style={{ animationDelay: "120ms" }}>
-        <CardHeader className="px-6 pt-6">
-          <CardTitle>Documents</CardTitle>
-          <CardDescription>
-            Documents in the selected knowledge base. Active rows refresh automatically while embedding runs.
-          </CardDescription>
+            <Button type="button" variant="outline" onClick={() => setActiveView("import")} className="gap-2">
+              <Upload className="h-4 w-4" /> Import sources
+            </Button>
+          </div>
         </CardHeader>
+        <div className="grid gap-0 divide-y divide-slate-100 lg:grid-cols-[minmax(0,1fr)_20rem] lg:divide-x lg:divide-y-0">
+          <div className="p-6">
+            {latestActiveDocument ? (
+              <div className="space-y-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-slate-950">{latestActiveDocument.name}</p>
+                    <p className="mt-1 text-sm text-slate-500">{documentStage(latestActiveDocument, latestProgress)}</p>
+                  </div>
+                  <Badge variant={statusVariant(latestActiveDocument.status)}>{latestActiveDocument.status}</Badge>
+                </div>
+                <ProgressBar
+                  value={latestProgress}
+                  tone={documentProgressTone(latestActiveDocument)}
+                  indeterminate={latestProgress < 100}
+                  label="Embedding pipeline"
+                  detail={latestActiveDocument.status}
+                />
+                <StepRail steps={progressSteps(latestActiveDocument, latestProgress)} />
+              </div>
+            ) : uploading ? (
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-slate-950">{uploading === "files" ? "Uploading files" : "Uploading text"}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {uploading === "files" ? `Queueing ${formatNumber(files.length)} files` : "Creating document record"}
+                    </p>
+                  </div>
+                  <Badge variant="info">requesting</Badge>
+                </div>
+                <ProgressBar value={uploadProgress} tone="blue" label="Upload request" detail="Sending to API" />
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                <p className="font-medium text-slate-950">No active ingestion job</p>
+                <p className="mt-1 text-sm text-slate-500">Start an import to watch parsing, embedding, and indexing progress here.</p>
+              </div>
+            )}
+          </div>
+          <aside className="bg-slate-50/70 p-6">
+            <p className="text-sm font-semibold text-slate-950">Queue summary</p>
+            <div className="mt-4 space-y-3">
+              <QueueSummaryRow label="Running" value={formatNumber(documentStats.active)} tone="info" />
+              <QueueSummaryRow label="Failed" value={formatNumber(documentStats.failed)} tone={documentStats.failed > 0 ? "danger" : "muted"} />
+              <QueueSummaryRow label="Completed" value={formatNumber(documentStats.byFilter.all - documentStats.active - documentStats.failed)} tone="success" />
+            </div>
+          </aside>
+        </div>
+      </Card>
+      )}
+
+      {activeView === "library" && (
+      <Card className="animate-fade-up overflow-hidden p-0" style={{ animationDelay: "120ms" }}>
+        <CardHeader className="mb-0 border-b border-slate-200 px-6 py-5 sm:flex sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
+              <ListFilter className="h-4 w-4" />
+            </div>
+            <div>
+              <CardTitle>Document registry</CardTitle>
+              <CardDescription>
+                {formatNumber(filteredDocuments.length)} visible of {formatNumber(documents.length)} documents.
+              </CardDescription>
+            </div>
+          </div>
+          <Badge variant={activeDocuments.length > 0 ? "info" : "muted"}>
+            {activeDocuments.length > 0 ? `${formatNumber(activeDocuments.length)} processing` : "idle"}
+          </Badge>
+          <Button type="button" variant="outline" onClick={() => setActiveView("overview")} className="gap-2">
+            <ArrowLeft className="h-4 w-4" /> Overview
+          </Button>
+        </CardHeader>
+        <div className="border-b border-slate-100 bg-slate-50/60 px-6 py-4">
+          <div className="grid gap-3 xl:grid-cols-[minmax(16rem,1fr)_14rem_16rem] xl:items-end">
+            <div className="space-y-1">
+              <Label>Search</Label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={documentSearch}
+                  onChange={(event) => setDocumentSearch(event.target.value)}
+                  placeholder="Search documents"
+                  className="pl-9"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Status</Label>
+              <Select value={documentFilter} onChange={(event) => setDocumentFilter(event.target.value as DocumentFilter)}>
+                {DOCUMENT_FILTERS.map((filter) => (
+                  <option key={filter.value} value={filter.value}>
+                    {filter.label} ({formatNumber(documentStats.byFilter[filter.value])})
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Source type</Label>
+              <Select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+                <option value="all">All source types</option>
+                {sourceOptions.map((source) => (
+                  <option key={source} value={source}>
+                    {governanceSourceLabel(source)}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        </div>
         <Table>
           <THead>
             <TR>
@@ -639,7 +1061,7 @@ export default function DocumentsPage() {
             </TR>
           </THead>
           <TBody>
-            {documents.map((document) => {
+            {filteredDocuments.map((document) => {
               const progress = documentProgress(document, progressByRun[documentProgressKey(document)]);
               const failed = document.status.toLowerCase() === "failed";
               const completed = document.status.toLowerCase() === "completed";
@@ -696,6 +1118,8 @@ export default function DocumentsPage() {
                         variant="outline"
                         onClick={() => openDocumentPreview(document)}
                         title="View content"
+                        aria-label={`View ${document.name}`}
+                        className="h-9 w-9 p-0"
                       >
                         <FileText className="h-4 w-4" />
                       </Button>
@@ -704,6 +1128,8 @@ export default function DocumentsPage() {
                         variant="outline"
                         onClick={() => openGovernance(document)}
                         title="Governance"
+                        aria-label={`Edit governance for ${document.name}`}
+                        className="h-9 w-9 p-0"
                       >
                         <ShieldCheck className="h-4 w-4" />
                       </Button>
@@ -712,6 +1138,8 @@ export default function DocumentsPage() {
                         variant="outline"
                         onClick={() => reprocessDocument(document.id)}
                         title="Reprocess"
+                        aria-label={`Reprocess ${document.name}`}
+                        className="h-9 w-9 p-0"
                       >
                         <RefreshCcw className="h-4 w-4" />
                       </Button>
@@ -720,6 +1148,8 @@ export default function DocumentsPage() {
                         variant="destructive"
                         onClick={() => deleteDocument(document)}
                         title="Delete"
+                        aria-label={`Delete ${document.name}`}
+                        className="h-9 w-9 p-0"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -728,25 +1158,30 @@ export default function DocumentsPage() {
                 </TR>
               );
             })}
-            {documents.length === 0 && (
+            {filteredDocuments.length === 0 && (
               <TR>
                 <TD colSpan={8} className="text-center text-sm text-slate-500">
-                  {kbId ? "No documents yet." : "Select a knowledge base to view documents."}
+                  {documents.length === 0
+                    ? kbId
+                      ? "No documents yet."
+                      : "Select a knowledge base to view documents."
+                    : "No documents match the current filters."}
                 </TD>
               </TR>
             )}
           </TBody>
         </Table>
       </Card>
+      )}
 
       <Modal
         open={previewDocument !== null}
         onClose={() => setPreviewDocument(null)}
         title={previewDocument?.name ?? "Document content"}
         description={previewDocument ? `${previewDocument.source_type} / ${previewDocument.file_type ?? "-"}` : undefined}
-        className="max-h-[88vh] max-w-6xl overflow-hidden"
+        className="flex h-[calc(100vh-2rem)] max-h-[56rem] max-w-6xl flex-col overflow-hidden"
       >
-        <div className="flex max-h-[calc(88vh-8rem)] flex-col gap-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
           {previewDocument && (
             <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-2">
@@ -804,89 +1239,443 @@ export default function DocumentsPage() {
         onClose={() => setGovernanceDocument(null)}
         title={governanceDocument ? `Governance - ${governanceDocument.name}` : "Governance"}
         description="Control which sources can enter formal Agent retrieval and keep an audit trail."
-        className="max-h-[88vh] max-w-5xl overflow-hidden"
+        className="flex h-[calc(100vh-2rem)] max-h-[56rem] max-w-6xl flex-col overflow-hidden"
       >
-        <div className="grid max-h-[calc(88vh-8rem)] gap-5 overflow-auto lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-          <form className="space-y-4" onSubmit={updateGovernance}>
-            <GovernanceFields
-              sourceType={governanceForm.governance_source_type}
-              authorityLevel={governanceForm.authority_level}
-              reviewStatus={governanceForm.review_status}
-              onSourceTypeChange={(value) => setGovernanceForm((current) => ({ ...current, governance_source_type: value }))}
-              onAuthorityLevelChange={(value) => setGovernanceForm((current) => ({ ...current, authority_level: value }))}
-              onReviewStatusChange={(value) => setGovernanceForm((current) => ({ ...current, review_status: value }))}
-            />
-            <div className="space-y-1">
-              <Label htmlFor="governance-summary">Change summary</Label>
-              <Textarea
-                id="governance-summary"
-                value={governanceForm.change_summary}
-                onChange={(event) => setGovernanceForm((current) => ({ ...current, change_summary: event.target.value }))}
-                placeholder="Why this label changed"
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+          {governanceDocument && (
+            <div className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={statusVariant(governanceDocument.status)}>{governanceDocument.status}</Badge>
+                <Badge variant={reviewStatusVariant(governanceDocument.review_status)}>{governanceDocument.review_status}</Badge>
+                <Badge variant="muted">{authorityLabel(governanceDocument.authority_level)}</Badge>
+                <Badge variant="muted">v{governanceDocument.current_version}</Badge>
+                <Badge variant="muted">{formatNumber(governanceDocument.chunk_count)} chunks</Badge>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                {governanceSourceLabel(governanceDocument.governance_source_type)} · updated {formatDate(governanceDocument.updated_at)}
+              </p>
+            </div>
+          )}
+
+          {governanceError && <p className="shrink-0 rounded bg-red-50 p-3 text-sm text-red-700">{governanceError}</p>}
+
+          <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[18rem_minmax(0,1fr)]">
+            <aside className="min-h-0 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
+              <GovernanceLevelButton
+                active={governanceView === "overview"}
+                icon={<Layers3 className="h-4 w-4" />}
+                title="Overview"
+                detail="Status and next step"
+                onClick={() => setGovernanceView("overview")}
               />
-            </div>
-            {governanceError && <p className="rounded bg-red-50 p-3 text-sm text-red-700">{governanceError}</p>}
-            <Button
-              type="submit"
-              disabled={
-                governanceLoading ||
-                !governanceForm.governance_source_type ||
-                !governanceForm.authority_level ||
-                !governanceForm.review_status
-              }
-              className="gap-2"
-            >
-              <ShieldCheck className="h-4 w-4" /> {governanceLoading ? "Saving..." : "Save governance"}
-            </Button>
-          </form>
+              <GovernanceLevelButton
+                active={governanceView === "policy"}
+                icon={<ShieldCheck className="h-4 w-4" />}
+                title="Policy"
+                detail="Source and review labels"
+                onClick={() => setGovernanceView("policy")}
+              />
+              <GovernanceLevelButton
+                active={governanceView === "content"}
+                icon={<FileText className="h-4 w-4" />}
+                title="Content"
+                detail="Edit source and re-index"
+                onClick={() => setGovernanceView("content")}
+              />
+              <GovernanceLevelButton
+                active={governanceView === "monitor"}
+                icon={<Activity className="h-4 w-4" />}
+                title="Monitor"
+                detail="Progress, versions, audit"
+                onClick={() => setGovernanceView("monitor")}
+              />
+            </aside>
 
-          <div className="space-y-4">
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <History className="h-4 w-4 text-slate-500" />
-                <p className="font-medium text-slate-900">Version history</p>
-              </div>
-              <div className="space-y-2">
-                {versions.map((version) => (
-                  <div key={version.id} className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="muted">v{version.version_number}</Badge>
-                      <Badge variant={reviewStatusVariant(version.review_status)}>{version.review_status}</Badge>
-                      <Badge variant="muted">{authorityLabel(version.authority_level)}</Badge>
+            <section className="min-h-0 overflow-y-auto pr-1">
+              {governanceView === "overview" && governanceDocument && (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-slate-950">Document state</p>
+                        <p className="mt-1 text-sm text-slate-500">{documentStage(governanceDocument, governanceProgress)}</p>
+                      </div>
+                      {governanceLoading && <InlineSpinner className="text-blue-600" />}
                     </div>
-                    <p className="mt-2 text-slate-700">{version.change_summary ?? "No summary"}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {governanceSourceLabel(version.governance_source_type)} · {version.created_by_email ?? "system"} · {formatDate(version.created_at)}
-                    </p>
+                    <ProgressBar
+                      value={governanceProgress}
+                      tone={documentProgressTone(governanceDocument)}
+                      label="Indexing progress"
+                      detail={governanceIngestionProgress?.stage ?? governanceDocument.status}
+                      indeterminate={isActiveDocument(governanceDocument)}
+                    />
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <QueueSummaryRow label="Source" value={governanceSourceLabel(governanceDocument.governance_source_type)} tone="muted" />
+                      <QueueSummaryRow label="Review" value={governanceDocument.review_status} tone="info" />
+                      <QueueSummaryRow label="Version" value={`v${governanceDocument.current_version}`} tone="info" />
+                      <QueueSummaryRow label="Chunks" value={formatNumber(governanceDocument.chunk_count)} tone="success" />
+                    </div>
                   </div>
-                ))}
-                {!governanceLoading && versions.length === 0 && (
-                  <p className="text-sm text-slate-500">No versions recorded yet.</p>
-                )}
-              </div>
-            </div>
 
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <p className="mb-3 font-medium text-slate-900">Audit log</p>
-              <div className="space-y-2">
-                {auditLogs.map((entry) => (
-                  <div key={entry.id} className="rounded-md border border-slate-200 p-3 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <Badge variant="info">{entry.action}</Badge>
-                      <span className="text-xs text-slate-500">{formatDate(entry.created_at)}</span>
-                    </div>
-                    <p className="mt-2 text-slate-700">{entry.summary ?? "No summary"}</p>
-                    <p className="mt-1 text-xs text-slate-500">Actor: {entry.actor_email ?? "system"}</p>
+                  <div className="grid gap-3 lg:grid-cols-3">
+                    <WorkspaceModuleCard
+                      icon={<ShieldCheck className="h-5 w-5" />}
+                      title="Policy"
+                      detail="Adjust authority and release status."
+                      meta={governanceDocument.review_status}
+                      onClick={() => setGovernanceView("policy")}
+                    />
+                    <WorkspaceModuleCard
+                      icon={<FileText className="h-5 w-5" />}
+                      title="Content"
+                      detail="Update retrievable source text."
+                      meta={governanceContentSourceLabel(governanceContentSource)}
+                      onClick={() => setGovernanceView("content")}
+                    />
+                    <WorkspaceModuleCard
+                      icon={<History className="h-5 w-5" />}
+                      title="Monitor"
+                      detail="Review progress and audit records."
+                      meta={`${formatNumber(versions.length)} versions`}
+                      onClick={() => setGovernanceView("monitor")}
+                    />
                   </div>
-                ))}
-                {!governanceLoading && auditLogs.length === 0 && (
-                  <p className="text-sm text-slate-500">No audit entries recorded yet.</p>
-                )}
-              </div>
-            </div>
+                </div>
+              )}
+
+              {governanceView === "policy" && (
+                <form className="rounded-lg border border-slate-200 bg-white p-4" onSubmit={updateGovernance}>
+                  <div className="mb-4 flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-slate-500" />
+                    <p className="font-medium text-slate-900">Governance policy</p>
+                  </div>
+                  <div className="space-y-4">
+                    <GovernanceFields
+                      sourceType={governanceForm.governance_source_type}
+                      authorityLevel={governanceForm.authority_level}
+                      reviewStatus={governanceForm.review_status}
+                      onSourceTypeChange={(value) => setGovernanceForm((current) => ({ ...current, governance_source_type: value }))}
+                      onAuthorityLevelChange={(value) => setGovernanceForm((current) => ({ ...current, authority_level: value }))}
+                      onReviewStatusChange={(value) => setGovernanceForm((current) => ({ ...current, review_status: value }))}
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor="governance-summary">Change summary</Label>
+                      <Textarea
+                        id="governance-summary"
+                        value={governanceForm.change_summary}
+                        onChange={(event) => setGovernanceForm((current) => ({ ...current, change_summary: event.target.value }))}
+                        placeholder="Why this label changed"
+                        className="min-h-28"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+                      <Button type="button" variant="outline" onClick={() => setGovernanceView("overview")} className="gap-2">
+                        <ArrowLeft className="h-4 w-4" /> Overview
+                      </Button>
+                      <Button
+                        type="submit"
+                        disabled={
+                          governanceLoading ||
+                          !governanceForm.governance_source_type ||
+                          !governanceForm.authority_level ||
+                          !governanceForm.review_status
+                        }
+                        className="gap-2"
+                      >
+                        <ShieldCheck className="h-4 w-4" /> {governanceLoading ? "Saving..." : "Save policy"}
+                      </Button>
+                    </div>
+                  </div>
+                </form>
+              )}
+
+              {governanceView === "content" && (
+                <form className="rounded-lg border border-slate-200 bg-white p-4" onSubmit={updateDocumentContent}>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-slate-500" />
+                      <p className="font-medium text-slate-900">Editable source content</p>
+                    </div>
+                    <Badge variant={governanceContentSource === "parsed" ? "success" : governanceContentSource === "chunks" ? "warning" : "muted"}>
+                      {governanceContentSourceLabel(governanceContentSource)}
+                    </Badge>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
+                    <div className="space-y-1">
+                      <Label htmlFor="content-file-type">Type</Label>
+                      <Select
+                        id="content-file-type"
+                        value={contentForm.file_type}
+                        onChange={(event) => setContentForm((current) => ({ ...current, file_type: event.target.value }))}
+                      >
+                        <option value="md">Markdown</option>
+                        <option value="txt">Plain text</option>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="content-summary">Edit summary</Label>
+                      <Input
+                        id="content-summary"
+                        value={contentForm.change_summary}
+                        onChange={(event) => setContentForm((current) => ({ ...current, change_summary: event.target.value }))}
+                        placeholder="What changed in the source"
+                      />
+                    </div>
+                  </div>
+                  <Textarea
+                    value={contentForm.content}
+                    onChange={(event) => setContentForm((current) => ({ ...current, content: event.target.value }))}
+                    placeholder="Load or edit document content"
+                    className="mt-3 min-h-[24rem] font-mono text-xs leading-5"
+                  />
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-between">
+                    <Button type="button" variant="outline" onClick={() => setGovernanceView("overview")} className="gap-2">
+                      <ArrowLeft className="h-4 w-4" /> Overview
+                    </Button>
+                    <Button type="submit" disabled={contentSaving || governanceLoading || !contentForm.content.trim()} className="gap-2">
+                      <RefreshCcw className="h-4 w-4" /> {contentSaving ? "Queueing..." : "Save and re-index"}
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {governanceView === "monitor" && (
+                <div className="space-y-4">
+                  {governanceDocument && (
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Activity className="h-4 w-4 text-slate-500" />
+                          <p className="font-medium text-slate-900">Processing monitor</p>
+                        </div>
+                        <Badge variant={statusVariant(governanceDocument.status)}>{governanceDocument.status}</Badge>
+                      </div>
+                      <ProgressBar
+                        value={governanceProgress}
+                        tone={documentProgressTone(governanceDocument)}
+                        label="Current ingestion run"
+                        detail={documentStage(governanceDocument, governanceProgress)}
+                        indeterminate={isActiveDocument(governanceDocument)}
+                      />
+                      <StepRail steps={progressSteps(governanceDocument, governanceProgress)} className="mt-3" />
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                        <QueueSummaryRow label="Chunks" value={formatNumber(governanceDocument.chunk_count)} tone="success" />
+                        <QueueSummaryRow label="Version" value={`v${governanceDocument.current_version}`} tone="info" />
+                        <QueueSummaryRow label="Stage" value={governanceIngestionProgress?.stage ?? "-"} tone="muted" />
+                        <QueueSummaryRow label="Updated" value={governanceIngestionProgress?.updated_at ? formatDate(governanceIngestionProgress.updated_at) : "-"} tone="muted" />
+                      </div>
+                      {governanceDocument.error_message && (
+                        <p className="mt-3 rounded bg-red-50 p-3 text-sm text-red-700">{governanceDocument.error_message}</p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="mb-3 flex items-center gap-2">
+                        <History className="h-4 w-4 text-slate-500" />
+                        <p className="font-medium text-slate-900">Version history</p>
+                      </div>
+                      <div className="space-y-2">
+                        {versions.map((version) => (
+                          <div key={version.id} className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="muted">v{version.version_number}</Badge>
+                              <Badge variant={reviewStatusVariant(version.review_status)}>{version.review_status}</Badge>
+                              <Badge variant="muted">{authorityLabel(version.authority_level)}</Badge>
+                            </div>
+                            <p className="mt-2 text-slate-700">{version.change_summary ?? "No summary"}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {governanceSourceLabel(version.governance_source_type)} · {version.created_by_email ?? "system"} · {formatDate(version.created_at)}
+                            </p>
+                          </div>
+                        ))}
+                        {!governanceLoading && versions.length === 0 && (
+                          <p className="text-sm text-slate-500">No versions recorded yet.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <p className="mb-3 font-medium text-slate-900">Audit log</p>
+                      <div className="space-y-2">
+                        {auditLogs.map((entry) => (
+                          <div key={entry.id} className="rounded-md border border-slate-200 p-3 text-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <Badge variant="info">{entry.action}</Badge>
+                              <span className="text-xs text-slate-500">{formatDate(entry.created_at)}</span>
+                            </div>
+                            <p className="mt-2 text-slate-700">{entry.summary ?? "No summary"}</p>
+                            <p className="mt-1 text-xs text-slate-500">Actor: {entry.actor_email ?? "system"}</p>
+                          </div>
+                        ))}
+                        {!governanceLoading && auditLogs.length === 0 && (
+                          <p className="text-sm text-slate-500">No audit entries recorded yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+function MetricTile({
+  label,
+  value,
+  detail,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: "default" | "success" | "warning" | "info" | "danger" | "muted";
+}) {
+  const tones = {
+    default: "bg-slate-400",
+    success: "bg-emerald-500",
+    warning: "bg-amber-500",
+    info: "bg-sky-500",
+    danger: "bg-red-500",
+    muted: "bg-slate-300",
+  };
+
+  return (
+    <div className="bg-white/80 px-5 py-4">
+      <div className="flex items-center gap-2">
+        <span className={`h-2 w-2 rounded-full ${tones[tone]}`} />
+        <p className="text-xs font-medium uppercase text-slate-500">{label}</p>
+      </div>
+      <p className="mt-2 text-2xl font-semibold tabular-nums text-slate-950">{value}</p>
+      <p className="mt-1 text-xs text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
+function WorkspaceNavButton({
+  active,
+  icon,
+  title,
+  detail,
+  onClick,
+}: {
+  active: boolean;
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-3 rounded-md px-3 py-2 text-left transition-all duration-200 ${
+        active
+          ? "border border-blue-200 bg-blue-50 text-blue-950 shadow-sm"
+          : "border border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50"
+      }`}
+    >
+      <span className={active ? "text-blue-700" : "text-slate-500"}>{icon}</span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className={active ? "block text-xs text-blue-700" : "block text-xs text-slate-500"}>{detail}</span>
+      </span>
+    </button>
+  );
+}
+
+function GovernanceLevelButton({
+  active,
+  icon,
+  title,
+  detail,
+  onClick,
+}: {
+  active: boolean;
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`mb-1 flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-all duration-200 ${
+        active
+          ? "border-blue-200 bg-white text-blue-950 shadow-sm"
+          : "border-transparent text-slate-700 hover:border-slate-200 hover:bg-white"
+      }`}
+    >
+      <span className={active ? "text-blue-700" : "text-slate-500"}>{icon}</span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className={active ? "block text-xs text-blue-700" : "block text-xs text-slate-500"}>{detail}</span>
+      </span>
+    </button>
+  );
+}
+
+function WorkspaceModuleCard({
+  icon,
+  title,
+  detail,
+  meta,
+  onClick,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  meta: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group rounded-lg border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700 group-hover:border-blue-200 group-hover:bg-blue-50 group-hover:text-blue-700">
+          {icon}
+        </div>
+        <ArrowRight className="h-4 w-4 text-slate-400 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-blue-600" />
+      </div>
+      <p className="mt-4 font-semibold text-slate-950">{title}</p>
+      <p className="mt-1 text-sm text-slate-500">{detail}</p>
+      <p className="mt-4 text-xs font-medium uppercase text-slate-500">{meta}</p>
+    </button>
+  );
+}
+
+function QueueSummaryRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "success" | "info" | "danger" | "muted";
+}) {
+  const tones = {
+    success: "bg-emerald-500",
+    info: "bg-sky-500",
+    danger: "bg-red-500",
+    muted: "bg-slate-300",
+  };
+
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+      <div className="flex items-center gap-2">
+        <span className={`h-2 w-2 rounded-full ${tones[tone]}`} />
+        <span className="text-sm text-slate-600">{label}</span>
+      </div>
+      <span className="font-medium tabular-nums text-slate-950">{value}</span>
     </div>
   );
 }
@@ -898,6 +1687,7 @@ function GovernanceFields({
   onSourceTypeChange,
   onAuthorityLevelChange,
   onReviewStatusChange,
+  compact = false,
 }: {
   sourceType: string;
   authorityLevel: string;
@@ -905,9 +1695,10 @@ function GovernanceFields({
   onSourceTypeChange: (value: string) => void;
   onAuthorityLevelChange: (value: string) => void;
   onReviewStatusChange: (value: string) => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className={compact ? "grid gap-3" : "grid gap-3 sm:grid-cols-3"}>
       <div className="space-y-1">
         <Label>Source type</Label>
         <Select value={sourceType} onChange={(event) => onSourceTypeChange(event.target.value)} required>

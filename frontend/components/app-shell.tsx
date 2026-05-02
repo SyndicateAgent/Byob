@@ -151,8 +151,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Button>
         </div>
       </aside>
-      <main className="ml-64 min-h-screen p-8">
-        <div className="mx-auto w-full max-w-6xl">{children}</div>
+      <main className="ml-64 min-h-screen p-6 xl:p-8 2xl:p-10">
+        <div className="mx-auto w-full max-w-[96rem]">{children}</div>
       </main>
     </div>
   );

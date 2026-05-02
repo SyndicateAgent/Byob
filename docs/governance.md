@@ -38,8 +38,22 @@ MCP 和 HTTP 检索结果会返回文档治理字段，Agent prompt 会要求模
 
 - 初次导入。
 - 治理字段更新，例如从 `draft` 发布为 `published`。
+- Governance 面板中修改可检索源内容，并触发重新索引。
 
 版本快照保留当时的文件信息、治理字段、metadata、变更说明和操作人信息。
+
+## 内容修正与重新索引
+
+Governance 面板可以加载当前解析后的全文内容；如果解析快照不存在，则回退为 chunk 合并内容。保存修改后，BYOB 会把编辑后的内容作为新的文本源：
+
+1. 删除旧 chunk、旧 MinIO 解析资源、旧上传源对象和 Qdrant 向量点。
+2. 更新文档 hash、文件大小、source metadata 和版本号。
+3. 写入 `document.content_updated` 审计记录。
+4. 将文档重新置为 `pending` 并排队解析、切分、embedding 和索引。
+
+这保证 Agent 后续召回只使用重新索引后的内容，不会混用旧向量、旧图片资源和新文本。
+
+文档 reprocess 会保留原始上传源，但会先删除旧 MinIO 解析快照、旧解析资源、旧 chunk 和旧向量，再重新生成。删除文档会删除该文档的原始上传对象、解析快照、解析资源、chunk 和向量。删除知识库会删除整个 `knowledge_bases/{kb_id}/` MinIO 前缀和对应 Qdrant collection。
 
 ## 审计日志
 
@@ -47,10 +61,11 @@ MCP 和 HTTP 检索结果会返回文档治理字段，Agent prompt 会要求模
 
 - `document.created`
 - `document.governance_updated`
+- `document.content_updated`
 - `document.reprocessed`
 - `document.deleted`
 
-审计日志记录操作人、时间、变更摘要、变更前后快照。控制台 Documents 页面可以打开每个文档的 Governance 面板查看版本和审计历史。
+审计日志记录操作人、时间、变更摘要、变更前后快照。控制台 Documents 页面可以打开每个文档的 Governance 面板查看版本、审计历史、当前处理阶段、索引进度、chunk 数和失败信息。
 
 ## 推荐交付流程
 

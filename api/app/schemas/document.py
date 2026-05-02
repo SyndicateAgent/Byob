@@ -64,6 +64,16 @@ class DocumentGovernanceUpdateRequest(BaseModel):
     change_summary: str | None = Field(default=None, max_length=1000)
 
 
+class DocumentContentUpdateRequest(BaseModel):
+    """Editable source content update that queues a document for re-indexing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(min_length=1)
+    file_type: str = Field(default="md", pattern="^(txt|md|markdown)$")
+    change_summary: str | None = Field(default=None, max_length=1000)
+
+
 class DocumentResponse(BaseModel):
     """Document metadata and ingestion status."""
 

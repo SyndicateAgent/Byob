@@ -5,12 +5,12 @@ import { cn } from "@/lib/utils";
 type ProgressTone = "blue" | "cyan" | "emerald" | "amber" | "red" | "slate";
 
 const toneClasses: Record<ProgressTone, string> = {
-  blue: "from-blue-600 via-sky-500 to-cyan-500",
-  cyan: "from-cyan-600 via-sky-500 to-blue-500",
-  emerald: "from-emerald-600 via-teal-500 to-cyan-500",
-  amber: "from-amber-500 via-orange-500 to-rose-500",
-  red: "from-red-600 via-rose-500 to-orange-500",
-  slate: "from-slate-500 via-slate-400 to-slate-500",
+  blue: "bg-blue-600",
+  cyan: "bg-cyan-600",
+  emerald: "bg-emerald-600",
+  amber: "bg-amber-500",
+  red: "bg-red-600",
+  slate: "bg-slate-500",
 };
 
 export interface ProgressBarProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -45,22 +45,17 @@ export function ProgressBar({
           {showValue && <span className="font-medium tabular-nums text-slate-500">{safeValue}%</span>}
         </div>
       )}
-      <div className="h-2.5 overflow-hidden rounded-full border border-slate-200 bg-slate-100 shadow-inner">
+      <div className="h-2 overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200">
         <div
           className={cn(
-            "relative h-full rounded-full bg-gradient-to-r",
+            "relative h-full overflow-hidden rounded-full transition-[width] duration-700 ease-out motion-reduce:transition-none",
             toneClasses[tone],
           )}
           style={{ width: `${safeValue}%` }}
         >
-          <span
-            className="absolute inset-0 opacity-30"
-            style={{
-              backgroundImage:
-                "linear-gradient(45deg, rgba(255,255,255,.55) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.55) 50%, rgba(255,255,255,.55) 75%, transparent 75%, transparent)",
-              backgroundSize: "16px 16px",
-            }}
-          />
+          {indeterminate && safeValue > 0 && (
+            <span className="absolute inset-y-0 left-0 w-14 max-w-full animate-[sweep_1.6s_ease-in-out_infinite] bg-white/30 motion-reduce:hidden" />
+          )}
         </div>
       </div>
     </div>

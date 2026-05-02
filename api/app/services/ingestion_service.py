@@ -22,6 +22,7 @@ from api.app.models.document import Document
 from api.app.models.document_asset import DocumentAsset
 from api.app.models.knowledge_base import KnowledgeBase
 from api.app.services.document_service import (
+    document_generated_object_prefix,
     document_governance_payload,
     list_document_qdrant_point_ids,
     metadata_with_ingestion_progress,
@@ -87,6 +88,7 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                 mineru_fallback_to_pypdf=settings.mineru_fallback_to_pypdf,
             ),
         )
+        await minio_client.delete_prefix(document_generated_object_prefix(document))
         await update_document_progress(
             session_factory,
             document.id,

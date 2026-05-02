@@ -38,7 +38,7 @@ export function Modal({ open, onClose, title, description, children, className }
         )}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="mb-4 space-y-1">
+        <div className="mb-4 shrink-0 space-y-1">
           <h2 className="text-lg font-semibold">{title}</h2>
           {description && <p className="text-sm text-slate-500">{description}</p>}
         </div>

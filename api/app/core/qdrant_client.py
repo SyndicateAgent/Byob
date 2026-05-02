@@ -62,6 +62,14 @@ class QdrantStoreClient:
             wait=True,
         )
 
+    async def delete_collection(self, collection_name: str) -> None:
+        """Delete a Qdrant collection if it exists."""
+
+        exists = await self._client.collection_exists(collection_name)
+        if not exists:
+            return
+        await self._client.delete_collection(collection_name=collection_name)
+
     async def set_payload(
         self,
         collection_name: str,

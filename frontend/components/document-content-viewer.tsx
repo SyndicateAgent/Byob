@@ -220,24 +220,43 @@ export function RenderedContent({
   return <pre className="document-plain-text">{content}</pre>;
 }
 
-function ChunkContentPreview({ content, fileType }: { content: string; fileType: string | null }) {
+function ChunkContentPreview({
+  content,
+  fileType,
+  expanded = false,
+}: {
+  content: string;
+  fileType: string | null;
+  expanded?: boolean;
+}) {
   const trimmedContent = content.trim();
   const kind = React.useMemo(() => detectContentKind(fileType, trimmedContent), [fileType, trimmedContent]);
 
   if (!trimmedContent) return null;
   if (kind === "text") {
     return (
-      <p className="line-clamp-6 whitespace-pre-wrap break-words text-xs leading-5 text-slate-600">
+      <p
+        className={cn(
+          "whitespace-pre-wrap break-words text-slate-700",
+          expanded ? "text-sm leading-6" : "line-clamp-6 text-xs leading-5",
+        )}
+      >
         {trimmedContent}
       </p>
     );
   }
 
   return (
-    <div className="max-h-72 overflow-auto rounded-md border border-slate-100 bg-white p-2">
+    <div className={cn("overflow-auto rounded-md border border-slate-100 bg-white p-2", expanded ? "max-h-none" : "max-h-72")}>
       <RenderedContent className="document-rendered-compact" content={trimmedContent} kind={kind} />
     </div>
   );
+}
+
+function chunkSnippet(content: string) {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (!normalized) return "No text content";
+  return normalized.length > 150 ? `${normalized.slice(0, 150)}...` : normalized;
 }
 
 export function DocumentContentViewer({ content, chunks, fileType }: DocumentContentViewerProps) {
@@ -245,10 +264,23 @@ export function DocumentContentViewer({ content, chunks, fileType }: DocumentCon
   const displayContent = content || mergedChunkContent.content;
   const contentKind = React.useMemo(() => detectContentKind(fileType, displayContent), [displayContent, fileType]);
   const [mode, setMode] = React.useState<PreviewMode>(contentKind === "text" ? "text" : "rendered");
+  const [selectedChunkId, setSelectedChunkId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setMode(contentKind === "text" ? "text" : "rendered");
   }, [contentKind]);
+
+  React.useEffect(() => {
+    setSelectedChunkId((current) => {
+      if (current && mergedChunkContent.chunks.some((item) => item.chunk.id === current)) return current;
+      return mergedChunkContent.chunks[0]?.chunk.id ?? null;
+    });
+  }, [mergedChunkContent.chunks]);
+
+  const selectedChunk = React.useMemo(
+    () => mergedChunkContent.chunks.find((item) => item.chunk.id === selectedChunkId) ?? mergedChunkContent.chunks[0] ?? null,
+    [mergedChunkContent.chunks, selectedChunkId],
+  );
 
   const modes: Array<{ id: PreviewMode; label: string; icon: React.ElementType }> = [
     { id: "rendered", label: contentKindLabel(contentKind), icon: Eye },
@@ -257,8 +289,8 @@ export function DocumentContentViewer({ content, chunks, fileType }: DocumentCon
   ];
 
   return (
-    <div className="flex min-h-0 flex-col gap-3">
-      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-2 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="shrink-0 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="inline-flex w-full rounded-lg bg-slate-100 p-1 sm:w-auto">
           {modes.map((item) => {
             const Icon = item.icon;
@@ -292,53 +324,119 @@ export function DocumentContentViewer({ content, chunks, fileType }: DocumentCon
       </div>
 
       {mode === "rendered" && (
-        <div className="min-h-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-700">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="shrink-0 border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-700">
             Rendered content
           </div>
-          <div className="max-h-[48vh] overflow-auto p-4">
+          <div className="min-h-0 flex-1 overflow-auto p-4">
             <RenderedContent content={displayContent} kind={contentKind} />
           </div>
         </div>
       )}
 
       {mode === "text" && (
-        <div className="min-h-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-700">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="shrink-0 border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-700">
             Plain text
           </div>
-          <pre className="document-plain-text max-h-[48vh] overflow-auto p-4">{displayContent}</pre>
+          <pre className="document-plain-text min-h-0 flex-1 overflow-auto p-4">{displayContent}</pre>
         </div>
       )}
 
       {mode === "chunks" && (
-        <div className="min-h-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 px-4 py-3 text-sm font-medium text-slate-700">
-            Chunks
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="shrink-0 flex flex-col gap-2 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium text-slate-700">Chunk inspector</p>
+              <p className="text-xs text-slate-500">Select a chunk to inspect the exact stored text and overlap handling.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="info">{formatNumber(mergedChunkContent.chunks.length)} chunks</Badge>
+              {mergedChunkContent.overlappedChunkCount > 0 && (
+                <Badge variant="warning">{formatNumber(mergedChunkContent.overlappedChunkCount)} folded</Badge>
+              )}
+            </div>
           </div>
-          <div className="grid max-h-[48vh] gap-3 overflow-auto p-3 md:grid-cols-2 xl:grid-cols-3">
-            {mergedChunkContent.chunks.map((item) => (
-              <div key={item.chunk.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="info">#{item.chunk.chunk_index + 1}</Badge>
-                    {item.overlapCharacters > 0 && (
-                      <Badge variant="warning">{formatNumber(item.overlapCharacters)} overlap</Badge>
-                    )}
-                  </div>
-                  <span className="text-xs text-slate-500">{item.chunk.chunk_type}</span>
-                </div>
-                {item.overlapCharacters > 0 && (
-                  <div className="mb-2 rounded-md border border-amber-100 bg-amber-50 px-2 py-1.5 text-[11px] leading-4 text-amber-800">
-                    <div className="font-medium">Folded overlap</div>
-                    <div className="mt-1 text-amber-700">
-                      <ChunkContentPreview content={item.overlapContent} fileType={fileType} />
+          <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,14rem)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[22rem_minmax(0,1fr)] lg:grid-rows-1">
+            <aside className="min-h-0 overflow-y-auto border-b border-slate-100 bg-slate-50/70 p-3 lg:border-b-0 lg:border-r">
+              <div className="space-y-2">
+                {mergedChunkContent.chunks.map((item) => {
+                  const active = selectedChunk?.chunk.id === item.chunk.id;
+                  const displayText = item.uniqueContent || item.content;
+                  return (
+                    <button
+                      key={item.chunk.id}
+                      type="button"
+                      onClick={() => setSelectedChunkId(item.chunk.id)}
+                      className={cn(
+                        "w-full rounded-lg border p-3 text-left transition-all duration-200",
+                        active
+                          ? "border-blue-200 bg-white shadow-sm ring-1 ring-blue-100"
+                          : "border-slate-200 bg-white/70 hover:border-slate-300 hover:bg-white",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant={active ? "info" : "muted"}>#{item.chunk.chunk_index + 1}</Badge>
+                          {item.chunk.page_num !== null && <Badge variant="muted">p{item.chunk.page_num}</Badge>}
+                        </div>
+                        <span className="text-xs text-slate-500">{formatNumber(displayText.length)} chars</span>
+                      </div>
+                      <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600">
+                        {chunkSnippet(displayText)}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Badge variant="muted">{item.chunk.chunk_type}</Badge>
+                        {item.overlapCharacters > 0 && (
+                          <Badge variant="warning">{formatNumber(item.overlapCharacters)} overlap</Badge>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+            <section className="min-h-0 min-w-0 overflow-y-auto p-4">
+              {selectedChunk ? (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950">Chunk #{selectedChunk.chunk.chunk_index + 1}</p>
+                        <p className="mt-1 text-xs text-slate-500">ID {selectedChunk.chunk.id}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 sm:justify-end">
+                        <Badge variant="muted">{selectedChunk.chunk.chunk_type}</Badge>
+                        {selectedChunk.chunk.page_num !== null && <Badge variant="muted">page {selectedChunk.chunk.page_num}</Badge>}
+                        <Badge variant="info">{formatNumber((selectedChunk.uniqueContent || selectedChunk.content).length)} chars</Badge>
+                        {selectedChunk.overlapCharacters > 0 && (
+                          <Badge variant="warning">{formatNumber(selectedChunk.overlapCharacters)} overlap folded</Badge>
+                        )}
+                      </div>
                     </div>
                   </div>
-                )}
-                <ChunkContentPreview content={item.uniqueContent || item.content} fileType={fileType} />
-              </div>
-            ))}
+
+                  {selectedChunk.overlapCharacters > 0 && (
+                    <div className="rounded-lg border border-amber-100 bg-amber-50 p-3 text-sm text-amber-900">
+                      <div className="mb-2 font-medium">Folded overlap</div>
+                      <ChunkContentPreview content={selectedChunk.overlapContent} fileType={fileType} expanded />
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                      <p className="text-sm font-medium text-slate-900">Stored chunk content</p>
+                      {selectedChunk.chunk.content_hash && <Badge variant="muted">hash {selectedChunk.chunk.content_hash.slice(0, 10)}</Badge>}
+                    </div>
+                    <ChunkContentPreview content={selectedChunk.uniqueContent || selectedChunk.content} fileType={fileType} expanded />
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">
+                  No chunks available.
+                </div>
+              )}
+            </section>
           </div>
         </div>
       )}

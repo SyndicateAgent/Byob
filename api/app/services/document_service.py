@@ -14,6 +14,7 @@ from api.app.models.document_audit_log import DocumentAuditLog
 from api.app.models.document_version import DocumentVersion
 from api.app.models.knowledge_base import KnowledgeBase
 from api.app.schemas.document import (
+    DocumentContentUpdateRequest,
     DocumentGovernanceInput,
     DocumentGovernanceUpdateRequest,
     DocumentTextCreateRequest,
@@ -21,6 +22,26 @@ from api.app.schemas.document import (
 )
 
 DuplicateDocumentReason = Literal["duplicate_name", "duplicate_file_hash"]
+
+
+def knowledge_base_object_prefix(kb_id: UUID) -> str:
+    """Return the MinIO prefix containing all objects for one knowledge base."""
+
+    return f"knowledge_bases/{kb_id}/"
+
+
+def document_generated_object_prefix(document: Document) -> str:
+    """Return the MinIO prefix for parsed snapshots and extracted assets."""
+
+    return f"knowledge_bases/{document.kb_id}/documents/{document.id}/"
+
+
+def document_source_object_key(document: Document) -> str | None:
+    """Return the original uploaded object key for a document, if any."""
+
+    if document.source_type != "upload":
+        return None
+    return document.minio_path
 
 
 @dataclass(frozen=True)
@@ -404,6 +425,74 @@ async def update_document_governance(
         after=document_snapshot(document),
         actor=actor,
     )
+    await session.commit()
+    await session.refresh(document)
+    return document
+
+
+async def update_document_content_source(
+    session: AsyncSession,
+    document: Document,
+    payload: DocumentContentUpdateRequest,
+    *,
+    actor: AuditActor | None = None,
+) -> Document:
+    """Replace source content with edited text and queue re-indexing."""
+
+    before = document_snapshot(document)
+    encoded = payload.content.encode("utf-8")
+    file_type = "md" if payload.file_type == "markdown" else payload.file_type
+    metadata = {
+        key: value
+        for key, value in document.metadata_.items()
+        if key not in {"parsed_content", "ingestion_progress"}
+    }
+    metadata["inline_content"] = payload.content
+    metadata["content_edit"] = {
+        "updated_at": datetime.now(UTC).isoformat(),
+        "change_summary": payload.change_summary or "Source content updated",
+        "actor_email": actor.email if actor else None,
+    }
+
+    await session.execute(delete(Chunk).where(Chunk.document_id == document.id))
+    await session.execute(delete(DocumentAsset).where(DocumentAsset.document_id == document.id))
+    document.source_type = "text"
+    document.source_url = None
+    document.minio_path = None
+    document.file_type = file_type
+    document.file_size = len(encoded)
+    document.file_hash = hash_content(encoded)
+    document.metadata_ = metadata_with_ingestion_progress(
+        metadata,
+        stage="queued",
+        progress=10,
+        status="pending",
+        detail="Queued after content edit",
+        reset=True,
+    )
+    document.status = "pending"
+    document.error_message = None
+    document.chunk_count = 0
+
+    next_version = await next_document_version_number(session, document.id)
+    summary = payload.change_summary or "Source content updated"
+    await record_document_version(
+        session,
+        document,
+        version_number=next_version,
+        change_summary=summary,
+        actor=actor,
+    )
+    record_document_audit_log(
+        session,
+        document=document,
+        action="document.content_updated",
+        summary=summary,
+        before=before,
+        after=document_snapshot(document),
+        actor=actor,
+    )
+    await refresh_knowledge_base_counts(session, document.kb_id)
     await session.commit()
     await session.refresh(document)
     return document

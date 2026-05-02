@@ -8,6 +8,7 @@ from pytest import MonkeyPatch
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.app.api.v1 import documents as documents_api
+from api.app.api.v1 import knowledge_bases as knowledge_bases_api
 from api.app.config import Settings
 from api.app.core.qdrant_client import QdrantStoreClient
 from api.app.main import create_app
@@ -160,10 +161,24 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
             calls.append("delete_points")
             self.deleted.append((collection_name, point_ids))
 
+    class FakeMinioClient:
+        def __init__(self) -> None:
+            self.deleted_prefixes: list[str] = []
+
+        async def delete_prefix(self, prefix: str) -> int:
+            calls.append("delete_prefix")
+            self.deleted_prefixes.append(prefix)
+            return 1
+
     qdrant_client = FakeQdrantClient()
+    minio_client = FakeMinioClient()
     request = cast(
         Request,
-        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(qdrant_client=qdrant_client))),
+        SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(qdrant_client=qdrant_client, minio_client=minio_client)
+            )
+        ),
     )
 
     async def fake_get_document(session: AsyncSession, lookup_id: UUID) -> Document | None:
@@ -196,6 +211,9 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
         assert selected_document is document
         assert "actor" in kwargs
         assert qdrant_client.deleted == [("kb_collection", [str(old_point_id)])]
+        assert minio_client.deleted_prefixes == [
+            f"knowledge_bases/{kb_id}/documents/{document_id}/"
+        ]
         document.status = "pending"
         document.chunk_count = 0
         return document
@@ -230,11 +248,351 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
         "get_knowledge_base",
         "list_point_ids",
         "delete_points",
+        "delete_prefix",
         "reset",
         "enqueue",
     ]
     assert response.id == document_id
     assert response.status == "pending"
+
+
+async def test_content_update_deletes_vectors_before_reindex(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Editing source content must remove old vectors before queueing a new run."""
+
+    now = datetime.now(UTC)
+    kb_id = uuid4()
+    document_id = uuid4()
+    old_point_id = uuid4()
+    document = Document(
+        id=document_id,
+        kb_id=kb_id,
+        name="policy.pdf",
+        file_type="pdf",
+        file_size=256,
+        minio_path="documents/policy.pdf",
+        file_hash="hash",
+        source_type="upload",
+        governance_source_type="internal_sop",
+        authority_level=3,
+        review_status="published",
+        current_version=1,
+        status="completed",
+        error_message=None,
+        metadata_={},
+        chunk_count=3,
+    )
+    document.created_at = now
+    document.updated_at = now
+    knowledge_base = KnowledgeBase(id=kb_id, name="KB", qdrant_collection="kb_collection")
+    calls: list[str] = []
+
+    class FakeQdrantClient:
+        def __init__(self) -> None:
+            self.deleted: list[tuple[str, list[str]]] = []
+
+        async def delete_points(self, collection_name: str, point_ids: list[str]) -> None:
+            calls.append("delete_points")
+            self.deleted.append((collection_name, point_ids))
+
+    class FakeMinioClient:
+        def __init__(self) -> None:
+            self.deleted_prefixes: list[str] = []
+            self.deleted_objects: list[str] = []
+
+        async def delete_prefix(self, prefix: str) -> int:
+            calls.append("delete_prefix")
+            self.deleted_prefixes.append(prefix)
+            return 2
+
+        async def delete_object(self, key: str | None) -> None:
+            calls.append("delete_object")
+            if key is not None:
+                self.deleted_objects.append(key)
+
+    qdrant_client = FakeQdrantClient()
+    minio_client = FakeMinioClient()
+    request = cast(
+        Request,
+        SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(qdrant_client=qdrant_client, minio_client=minio_client)
+            )
+        ),
+    )
+
+    async def fake_get_document(session: AsyncSession, lookup_id: UUID) -> Document | None:
+        calls.append("get_document")
+        assert lookup_id == document_id
+        return document
+
+    async def fake_get_knowledge_base(
+        session: AsyncSession,
+        lookup_id: UUID,
+    ) -> KnowledgeBase | None:
+        calls.append("get_knowledge_base")
+        assert lookup_id == kb_id
+        return knowledge_base
+
+    async def fake_list_document_qdrant_point_ids(
+        session: AsyncSession,
+        selected_document: Document,
+    ) -> list[str]:
+        calls.append("list_point_ids")
+        assert selected_document is document
+        return [str(old_point_id)]
+
+    async def fake_update_document_content_source(
+        session: AsyncSession,
+        selected_document: Document,
+        payload: object,
+        **kwargs: object,
+    ) -> Document:
+        calls.append("update_content")
+        assert selected_document is document
+        assert "actor" in kwargs
+        assert qdrant_client.deleted == [("kb_collection", [str(old_point_id)])]
+        assert minio_client.deleted_prefixes == [
+            f"knowledge_bases/{kb_id}/documents/{document_id}/"
+        ]
+        assert minio_client.deleted_objects == ["documents/policy.pdf"]
+        assert isinstance(payload, documents_api.DocumentContentUpdateRequest)
+        assert payload.content == "edited source"
+        document.source_type = "text"
+        document.status = "pending"
+        document.chunk_count = 0
+        return document
+
+    def fake_enqueue_document(queued_document_id: UUID) -> None:
+        calls.append("enqueue")
+        assert queued_document_id == document_id
+
+    monkeypatch.setattr(documents_api, "get_document", fake_get_document)
+    monkeypatch.setattr(documents_api, "get_knowledge_base", fake_get_knowledge_base)
+    monkeypatch.setattr(
+        documents_api,
+        "list_document_qdrant_point_ids",
+        fake_list_document_qdrant_point_ids,
+    )
+    monkeypatch.setattr(
+        documents_api,
+        "update_document_content_source",
+        fake_update_document_content_source,
+    )
+    monkeypatch.setattr(documents_api, "enqueue_document", fake_enqueue_document)
+
+    response = await documents_api.update_document_content_endpoint(
+        document_id,
+        documents_api.DocumentContentUpdateRequest(content="edited source", file_type="md"),
+        request,
+        current_user=CurrentUser(id=uuid4(), email="admin@example.com", role="admin"),
+        session=cast(AsyncSession, object()),
+    )
+
+    assert calls == [
+        "get_document",
+        "get_knowledge_base",
+        "list_point_ids",
+        "delete_points",
+        "delete_prefix",
+        "delete_object",
+        "update_content",
+        "enqueue",
+    ]
+    assert response.id == document_id
+    assert response.source_type == "text"
+    assert response.status == "pending"
+
+
+async def test_delete_document_removes_minio_before_db_delete(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Deleting a document must remove vectors and MinIO objects before DB deletion."""
+
+    now = datetime.now(UTC)
+    kb_id = uuid4()
+    document_id = uuid4()
+    old_point_id = uuid4()
+    document = Document(
+        id=document_id,
+        kb_id=kb_id,
+        name="source.pdf",
+        file_type="pdf",
+        file_size=256,
+        minio_path="knowledge_bases/source-file",
+        file_hash="hash",
+        source_type="upload",
+        governance_source_type="internal_sop",
+        authority_level=3,
+        review_status="published",
+        current_version=1,
+        status="completed",
+        error_message=None,
+        metadata_={},
+        chunk_count=3,
+    )
+    document.created_at = now
+    document.updated_at = now
+    knowledge_base = KnowledgeBase(id=kb_id, name="KB", qdrant_collection="kb_collection")
+    calls: list[str] = []
+
+    class FakeQdrantClient:
+        async def delete_points(self, collection_name: str, point_ids: list[str]) -> None:
+            calls.append("delete_points")
+            assert collection_name == "kb_collection"
+            assert point_ids == [str(old_point_id)]
+
+    class FakeMinioClient:
+        async def delete_prefix(self, prefix: str) -> int:
+            calls.append("delete_prefix")
+            assert prefix == f"knowledge_bases/{kb_id}/documents/{document_id}/"
+            return 2
+
+        async def delete_object(self, key: str | None) -> None:
+            calls.append("delete_object")
+            assert key == "knowledge_bases/source-file"
+
+    request = cast(
+        Request,
+        SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    qdrant_client=FakeQdrantClient(),
+                    minio_client=FakeMinioClient(),
+                )
+            )
+        ),
+    )
+
+    async def fake_get_document(session: AsyncSession, lookup_id: UUID) -> Document | None:
+        calls.append("get_document")
+        assert lookup_id == document_id
+        return document
+
+    async def fake_get_knowledge_base(
+        session: AsyncSession,
+        lookup_id: UUID,
+    ) -> KnowledgeBase | None:
+        calls.append("get_knowledge_base")
+        assert lookup_id == kb_id
+        return knowledge_base
+
+    async def fake_list_document_qdrant_point_ids(
+        session: AsyncSession,
+        selected_document: Document,
+    ) -> list[str]:
+        calls.append("list_point_ids")
+        assert selected_document is document
+        return [str(old_point_id)]
+
+    async def fake_delete_document(
+        session: AsyncSession,
+        selected_document: Document,
+        **kwargs: object,
+    ) -> None:
+        calls.append("delete_document")
+        assert selected_document is document
+        assert "actor" in kwargs
+
+    monkeypatch.setattr(documents_api, "get_document", fake_get_document)
+    monkeypatch.setattr(documents_api, "get_knowledge_base", fake_get_knowledge_base)
+    monkeypatch.setattr(
+        documents_api,
+        "list_document_qdrant_point_ids",
+        fake_list_document_qdrant_point_ids,
+    )
+    monkeypatch.setattr(documents_api, "delete_document", fake_delete_document)
+
+    await documents_api.delete_document_endpoint(
+        document_id,
+        request,
+        current_user=CurrentUser(id=uuid4(), email="admin@example.com", role="admin"),
+        session=cast(AsyncSession, object()),
+    )
+
+    assert calls == [
+        "get_document",
+        "get_knowledge_base",
+        "list_point_ids",
+        "delete_points",
+        "delete_prefix",
+        "delete_object",
+        "delete_document",
+    ]
+
+
+async def test_delete_knowledge_base_removes_storage_before_db_delete(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Deleting a KB must remove its MinIO tree and Qdrant collection first."""
+
+    kb_id = uuid4()
+    knowledge_base = KnowledgeBase(id=kb_id, name="KB", qdrant_collection="kb_collection")
+    calls: list[str] = []
+
+    class FakeMinioClient:
+        async def delete_prefix(self, prefix: str) -> int:
+            calls.append("delete_prefix")
+            assert prefix == f"knowledge_bases/{kb_id}/"
+            return 5
+
+    class FakeQdrantClient:
+        async def delete_collection(self, collection_name: str) -> None:
+            calls.append("delete_collection")
+            assert collection_name == "kb_collection"
+
+    class FakeRedisClient:
+        async def delete_prefix(self, prefix: str) -> int:
+            calls.append("clear_cache")
+            assert prefix == "retrieval:"
+            return 1
+
+    request = cast(
+        Request,
+        SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    minio_client=FakeMinioClient(),
+                    qdrant_client=FakeQdrantClient(),
+                    redis_client=FakeRedisClient(),
+                )
+            )
+        ),
+    )
+
+    async def fake_get_knowledge_base(
+        session: AsyncSession,
+        lookup_id: UUID,
+    ) -> KnowledgeBase | None:
+        calls.append("get_knowledge_base")
+        assert lookup_id == kb_id
+        return knowledge_base
+
+    async def fake_delete_knowledge_base(
+        session: AsyncSession,
+        selected_knowledge_base: KnowledgeBase,
+    ) -> None:
+        calls.append("delete_kb")
+        assert selected_knowledge_base is knowledge_base
+
+    monkeypatch.setattr(knowledge_bases_api, "get_knowledge_base", fake_get_knowledge_base)
+    monkeypatch.setattr(knowledge_bases_api, "delete_knowledge_base", fake_delete_knowledge_base)
+
+    await knowledge_bases_api.delete_knowledge_base_endpoint(
+        kb_id,
+        request,
+        current_user=CurrentUser(id=uuid4(), email="admin@example.com", role="admin"),
+        session=cast(AsyncSession, object()),
+    )
+
+    assert calls == [
+        "get_knowledge_base",
+        "delete_prefix",
+        "delete_collection",
+        "delete_kb",
+        "clear_cache",
+    ]
 
 
 def test_asset_references_are_rewritten_in_markdown_and_html() -> None:
