@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.app.api.health import router as health_router
 from api.app.api.v1 import router as api_v1_router
 from api.app.config import Settings, get_settings
+from api.app.core.clip_embedding import ClipEmbeddingClient
 from api.app.core.embedding import EmbeddingClient
 from api.app.core.logging import configure_logging
 from api.app.core.metrics import MetricsMiddleware
@@ -33,6 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         str(settings.qdrant_url), settings.dependency_health_timeout_seconds
     )
     app.state.embedding_client = EmbeddingClient(settings)
+    app.state.clip_embedding_client = ClipEmbeddingClient(settings)
+    if settings.clip_preload_on_startup:
+        await app.state.clip_embedding_client.warmup()
     app.state.rerank_client = RerankClient(settings)
     app.state.minio_client = MinioClient(
         str(settings.minio_endpoint_url),
@@ -46,6 +50,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await app.state.redis_client.close()
         await app.state.qdrant_client.close()
         await app.state.embedding_client.close()
+        await app.state.clip_embedding_client.close()
         await app.state.rerank_client.close()
         await app.state.minio_client.close()
         await db_engine.dispose()

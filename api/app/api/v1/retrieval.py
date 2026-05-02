@@ -181,6 +181,7 @@ async def run_search(
             request.app.state.settings,
             request.app.state.qdrant_client,
             request.app.state.embedding_client,
+            request.app.state.clip_embedding_client,
             request.app.state.rerank_client,
             request_id=request.state.request_id,
             payload=payload,

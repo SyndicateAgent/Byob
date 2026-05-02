@@ -1,5 +1,6 @@
 import re
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from time import perf_counter
 from uuid import UUID, uuid4
@@ -9,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.app.config import Settings
+from api.app.core.clip_embedding import ClipEmbeddingClient
 from api.app.core.embedding import EmbeddingClient
-from api.app.core.qdrant_client import QdrantStoreClient
+from api.app.core.qdrant_client import QdrantStoreClient, visual_collection_name
 from api.app.core.rerank import RerankClient
 from api.app.models.chunk import Chunk
 from api.app.models.document import Document
@@ -53,6 +55,7 @@ async def search(
     settings: Settings,
     qdrant_client: QdrantStoreClient,
     embedding_client: EmbeddingClient,
+    clip_embedding_client: ClipEmbeddingClient,
     rerank_client: RerankClient,
     *,
     request_id: str,
@@ -73,6 +76,8 @@ async def search(
 
     dense_candidates: list[Candidate] = []
     sparse_candidates: list[Candidate] = []
+    visual_candidates: list[Candidate] = []
+    visual_asset_keys_by_chunk: dict[UUID, list[tuple[UUID, UUID]]] = {}
     stage_started = perf_counter()
     for knowledge_base in knowledge_bases:
         dense_points = await qdrant_client.query_dense(
@@ -96,7 +101,29 @@ async def search(
         sparse_candidates.extend(points_to_candidates(sparse_points))
     stages["sparse_search_ms"] = elapsed_ms(stage_started)
 
-    fused = rrf_fuse([dense_candidates, sparse_candidates])
+    if settings.multimodal_rag_enabled and payload.options.enable_visual_search:
+        visual_collections = await existing_visual_collections(qdrant_client, knowledge_bases)
+        if visual_collections:
+            stage_started = perf_counter()
+            visual_query_vectors = await clip_embedding_client.embed_texts([payload.query])
+            stages["visual_embedding_ms"] = elapsed_ms(stage_started)
+            if visual_query_vectors:
+                stage_started = perf_counter()
+                for visual_collection in visual_collections:
+                    visual_points = await qdrant_client.query_visual(
+                        visual_collection,
+                        visual_query_vectors[0],
+                        query_filter,
+                        candidate_limit,
+                    )
+                    visual_candidates.extend(points_to_candidates(visual_points))
+                    merge_visual_asset_keys(
+                        visual_asset_keys_by_chunk,
+                        visual_asset_keys_from_points(visual_points),
+                    )
+                stages["visual_search_ms"] = elapsed_ms(stage_started)
+
+    fused = rrf_fuse([dense_candidates, sparse_candidates, visual_candidates])
     if payload.options.score_threshold is not None:
         fused = [
             candidate
@@ -162,6 +189,7 @@ async def search(
         document_by_id,
         include_metadata=payload.options.include_metadata,
         include_parent_context=payload.options.include_parent_context,
+        extra_asset_keys_by_chunk_id=visual_asset_keys_by_chunk,
     )
     total_latency_ms = elapsed_ms(started)
 
@@ -181,7 +209,9 @@ async def search(
         stats=RetrievalStats(
             total_latency_ms=total_latency_ms,
             stages=stages,
-            total_candidates=len(dense_candidates) + len(sparse_candidates),
+            total_candidates=(
+                len(dense_candidates) + len(sparse_candidates) + len(visual_candidates)
+            ),
             after_fusion=len(fused),
             after_rerank=len(results),
         ),
@@ -364,6 +394,52 @@ def rrf_fuse(rankings: list[list[Candidate]], k: int = RRF_K) -> list[Candidate]
     ]
 
 
+async def existing_visual_collections(
+    qdrant_client: QdrantStoreClient,
+    knowledge_bases: list[KnowledgeBase],
+) -> list[str]:
+    """Return visual collections that already exist for selected knowledge bases."""
+
+    existing: list[str] = []
+    for knowledge_base in knowledge_bases:
+        collection_name = visual_collection_name(knowledge_base.qdrant_collection)
+        if await qdrant_client.collection_exists(collection_name):
+            existing.append(collection_name)
+    return existing
+
+
+def visual_asset_keys_from_points(
+    points: list[models.ScoredPoint],
+) -> dict[UUID, list[tuple[UUID, UUID]]]:
+    """Return asset references from CLIP visual hits keyed by owning chunk."""
+
+    keys_by_chunk: dict[UUID, list[tuple[UUID, UUID]]] = {}
+    for point in points:
+        payload = point.payload or {}
+        chunk_id = payload.get("chunk_id")
+        document_id = payload.get("doc_id")
+        asset_id = payload.get("asset_id")
+        if not isinstance(chunk_id, str):
+            continue
+        if not isinstance(document_id, str) or not isinstance(asset_id, str):
+            continue
+        keys_by_chunk.setdefault(UUID(chunk_id), []).append((UUID(document_id), UUID(asset_id)))
+    return keys_by_chunk
+
+
+def merge_visual_asset_keys(
+    target: dict[UUID, list[tuple[UUID, UUID]]],
+    source: Mapping[UUID, Sequence[tuple[UUID, UUID]]],
+) -> None:
+    """Merge visual asset keys into a stable, duplicate-free mapping."""
+
+    for chunk_id, keys in source.items():
+        existing = target.setdefault(chunk_id, [])
+        for key in keys:
+            if key not in existing:
+                existing.append(key)
+
+
 async def load_chunks(session: AsyncSession, chunk_ids: list[UUID]) -> list[Chunk]:
     """Load chunks by IDs."""
 
@@ -393,6 +469,7 @@ async def build_results(
     *,
     include_metadata: bool,
     include_parent_context: bool,
+    extra_asset_keys_by_chunk_id: Mapping[UUID, Sequence[tuple[UUID, UUID]]] | None = None,
 ) -> list[RetrievalResult]:
     """Build public retrieval results."""
 
@@ -406,7 +483,12 @@ async def build_results(
         result = await session.execute(select(Chunk).where(Chunk.id.in_(parent_ids)))
         parent_by_id = {chunk.id: chunk for chunk in result.scalars().all()}
 
-    asset_by_key = await load_referenced_assets(session, [chunk for chunk, _ in scored_chunks])
+    extra_asset_keys_by_chunk_id = extra_asset_keys_by_chunk_id or {}
+    asset_by_key = await load_referenced_assets(
+        session,
+        [chunk for chunk, _ in scored_chunks],
+        extra_keys=flatten_asset_keys(extra_asset_keys_by_chunk_id.values()),
+    )
 
     results: list[RetrievalResult] = []
     for chunk, rerank_score in scored_chunks:
@@ -417,10 +499,16 @@ async def build_results(
             if parent is not None:
                 parent_chunk = ParentChunkContext(id=parent.id, content=parent.content)
 
+        asset_keys = dedupe_asset_keys(
+            [
+                *referenced_asset_keys(chunk.content),
+                *extra_asset_keys_by_chunk_id.get(chunk.id, []),
+            ]
+        )
         assets = [
             retrieval_asset_ref(asset)
-            for key in referenced_asset_keys(chunk.content)
-            if (asset := asset_by_key.get(key)) is not None
+            for key in asset_keys
+            if (asset := asset_by_key.get(key))
         ]
 
         results.append(
@@ -453,6 +541,8 @@ async def build_results(
 async def load_referenced_assets(
     session: AsyncSession,
     chunks: list[Chunk],
+    *,
+    extra_keys: Sequence[tuple[UUID, UUID]] = (),
 ) -> dict[tuple[UUID, UUID], DocumentAsset]:
     """Load assets explicitly referenced by retrieved chunk content."""
 
@@ -464,6 +554,12 @@ async def load_referenced_assets(
                 continue
             keys.append(key)
             seen.add(key)
+
+    for key in extra_keys:
+        if key in seen:
+            continue
+        keys.append(key)
+        seen.add(key)
 
     if not keys:
         return {}
@@ -490,6 +586,27 @@ def referenced_asset_keys(content: str) -> list[tuple[UUID, UUID]]:
         keys.append(key)
         seen.add(key)
     return keys
+
+
+def flatten_asset_keys(
+    groups: Sequence[Sequence[tuple[UUID, UUID]]],
+) -> list[tuple[UUID, UUID]]:
+    """Flatten a sequence of asset-key groups."""
+
+    return [key for group in groups for key in group]
+
+
+def dedupe_asset_keys(keys: Sequence[tuple[UUID, UUID]]) -> list[tuple[UUID, UUID]]:
+    """Return asset keys without duplicates while preserving order."""
+
+    unique: list[tuple[UUID, UUID]] = []
+    seen: set[tuple[UUID, UUID]] = set()
+    for key in keys:
+        if key in seen:
+            continue
+        unique.append(key)
+        seen.add(key)
+    return unique
 
 
 def retrieval_asset_ref(asset: DocumentAsset) -> RetrievalAssetRef:

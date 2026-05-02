@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.app.core.qdrant_client import visual_collection_name
 from api.app.deps import get_current_user, get_current_user_or_query_token, get_db_session
 from api.app.models.document import Document
 from api.app.schemas.auth import CurrentUser
@@ -46,6 +47,7 @@ from api.app.services.document_service import (
     list_document_audit_logs,
     list_document_qdrant_point_ids,
     list_document_versions,
+    list_document_visual_point_ids,
     list_documents,
     parsed_content_metadata,
     reset_document_for_reprocess,
@@ -447,9 +449,15 @@ async def update_document_governance_endpoint(
         actor=current_actor(current_user),
     )
     point_ids = await list_document_qdrant_point_ids(session, updated_document)
+    visual_point_ids = await list_document_visual_point_ids(session, updated_document)
     await request.app.state.qdrant_client.set_payload(
         knowledge_base.qdrant_collection,
         point_ids,
+        document_governance_payload(updated_document),
+    )
+    await request.app.state.qdrant_client.set_payload(
+        visual_collection_name(knowledge_base.qdrant_collection),
+        visual_point_ids,
         document_governance_payload(updated_document),
     )
     await clear_retrieval_cache(request)
@@ -565,9 +573,14 @@ async def update_document_content_endpoint(
         )
 
     point_ids = await list_document_qdrant_point_ids(session, document)
+    visual_point_ids = await list_document_visual_point_ids(session, document)
     await request.app.state.qdrant_client.delete_points(
         knowledge_base.qdrant_collection,
         point_ids,
+    )
+    await request.app.state.qdrant_client.delete_points(
+        visual_collection_name(knowledge_base.qdrant_collection),
+        visual_point_ids,
     )
     await delete_all_document_objects(request, document)
     updated_document = await update_document_content_source(
@@ -647,9 +660,14 @@ async def delete_document_endpoint(
             detail="Knowledge base not found",
         )
     point_ids = await list_document_qdrant_point_ids(session, document)
+    visual_point_ids = await list_document_visual_point_ids(session, document)
     await request.app.state.qdrant_client.delete_points(
         knowledge_base.qdrant_collection,
         point_ids,
+    )
+    await request.app.state.qdrant_client.delete_points(
+        visual_collection_name(knowledge_base.qdrant_collection),
+        visual_point_ids,
     )
     await delete_all_document_objects(request, document)
     await delete_document(session, document, actor=current_actor(current_user))
@@ -675,9 +693,14 @@ async def reprocess_document_endpoint(
             detail="Knowledge base not found",
         )
     point_ids = await list_document_qdrant_point_ids(session, document)
+    visual_point_ids = await list_document_visual_point_ids(session, document)
     await request.app.state.qdrant_client.delete_points(
         knowledge_base.qdrant_collection,
         point_ids,
+    )
+    await request.app.state.qdrant_client.delete_points(
+        visual_collection_name(knowledge_base.qdrant_collection),
+        visual_point_ids,
     )
     await delete_generated_document_objects(request, document)
     reset_document = await reset_document_for_reprocess(

@@ -1,5 +1,6 @@
 import json
 import mimetypes
+import re
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,42 @@ from pypdf import PdfReader
 from workers.parsers.base import ParsedAsset, ParsedDocument
 
 IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+HTML_TAG_PATTERN = re.compile(r"(<[^>]+>)")
+HEX_SEQUENCE_PATTERN = re.compile(r"\b(?:[0-9a-fA-F]{4,}\s+){1,}[0-9a-fA-F]{4,}\b")
+SINGLE_LETTER_SEQUENCE_PATTERN = re.compile(
+    r"(?<![A-Za-z])(?:[A-Za-z]\s+){2,}[A-Za-z](?![A-Za-z])"
+)
+COMMON_OCR_SPLIT_WORDS = {
+    "address",
+    "appendix",
+    "application",
+    "attachment",
+    "authority",
+    "classification",
+    "conclusion",
+    "description",
+    "diary",
+    "document",
+    "evidence",
+    "filename",
+    "filenames",
+    "government",
+    "incident",
+    "investigation",
+    "location",
+    "number",
+    "organisation",
+    "organization",
+    "partition",
+    "private",
+    "public",
+    "report",
+    "scenario",
+    "section",
+    "suspect",
+    "transaction",
+    "victim",
+}
 
 
 @dataclass(frozen=True)
@@ -109,6 +146,7 @@ def parse_pdf_with_mineru(content: bytes, config: PdfParserConfig) -> ParsedDocu
             )
 
         text, metadata, assets = read_mineru_output(output_dir, input_path.stem)
+        text = clean_pdf_extracted_text(text)
         if not text.strip():
             raise RuntimeError("MinerU produced empty text output")
         return ParsedDocument(
@@ -131,10 +169,75 @@ def parse_pdf_with_pypdf(content: bytes) -> ParsedDocument:
     pages: list[str] = []
     for page in reader.pages:
         pages.append(page.extract_text() or "")
+    text = clean_pdf_extracted_text("\n\n".join(pages))
     return ParsedDocument(
-        text="\n\n".join(pages),
+        text=text,
         metadata={"parser": "pypdf", "page_count": len(reader.pages)},
     )
+
+
+def clean_pdf_extracted_text(text: str) -> str:
+    """Repair conservative OCR spacing artifacts without touching HTML tags."""
+
+    segments = HTML_TAG_PATTERN.split(text)
+    return "".join(
+        segment
+        if segment.startswith("<") and segment.endswith(">")
+        else repair_ocr_spacing(segment)
+        for segment in segments
+    )
+
+
+def repair_ocr_spacing(text: str) -> str:
+    """Repair spacing artifacts commonly produced by PDF/OCR extraction."""
+
+    text = HEX_SEQUENCE_PATTERN.sub(lambda match: match.group(0).replace(" ", ""), text)
+    text = SINGLE_LETTER_SEQUENCE_PATTERN.sub(
+        lambda match: match.group(0).replace(" ", ""), text
+    )
+    previous = None
+    while previous != text:
+        previous = text
+        text = repair_common_split_words(text)
+    return text
+
+
+def repair_common_split_words(text: str) -> str:
+    """Join known OCR word fragments while leaving normal word gaps intact."""
+
+    words = sorted(COMMON_OCR_SPLIT_WORDS, key=len, reverse=True)
+    for word in words:
+        pattern = re.compile(split_word_pattern(word), flags=re.IGNORECASE)
+        text = pattern.sub(
+            lambda match, repaired_word=word: restore_split_word_case(
+                repaired_word,
+                match.group(0),
+            ),
+            text,
+        )
+    return text
+
+
+def split_word_pattern(word: str) -> str:
+    """Build a regex that matches a known word split into at least two fragments."""
+
+    alternatives = []
+    for split_index in range(1, len(word)):
+        left = re.escape(word[:split_index])
+        right = re.escape(word[split_index:])
+        alternatives.append(rf"\b{left}\s+{right}\b")
+    return "(?:" + "|".join(alternatives) + ")"
+
+
+def restore_split_word_case(word: str, original: str) -> str:
+    """Restore a repaired OCR word using the most likely casing style."""
+
+    compact = original.replace(" ", "")
+    if compact.isupper():
+        return word.upper()
+    if compact[:1].isupper():
+        return word.capitalize()
+    return word
 
 
 def read_mineru_output(

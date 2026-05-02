@@ -6,7 +6,7 @@ import pytest
 
 from workers.parsers import pdf_parser
 from workers.parsers.base import ParsedDocument
-from workers.parsers.pdf_parser import PdfParserConfig, parse_pdf
+from workers.parsers.pdf_parser import PdfParserConfig, clean_pdf_extracted_text, parse_pdf
 
 
 def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -32,12 +32,16 @@ def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) ->
         image_dir.mkdir()
         (image_dir / "figure.png").write_bytes(b"fake png")
         content_list = [
-            {"type": "text", "text": "Section title", "page_idx": 0},
+            {"type": "text", "text": "Section title\nV i c t i m(s)", "page_idx": 0},
             {"type": "equation", "text": "$E=mc^2$", "page_idx": 0},
             {
                 "type": "table",
                 "caption": ["Table 1"],
-                "html": "<table><tr><td>value</td></tr></table>",
+                "html": (
+                    "<table><tr><td>Num ber</td>"
+                    "<td>hw1\\diary\\d iary 4.26.txt</td>"
+                    "<td>eac7faf73f64dba 833466d3b21c2 ce3a</td></tr></table>"
+                ),
                 "page_idx": 1,
             },
             {
@@ -75,8 +79,14 @@ def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) ->
         "image": 1,
     }
     assert "Section title" in parsed.text
+    assert "Victim(s)" in parsed.text
     assert "$E=mc^2$" in parsed.text
     assert "<table>" in parsed.text
+    assert "Num ber" not in parsed.text
+    assert "<td>Number</td>" in parsed.text
+    assert "d iary" not in parsed.text
+    assert "diary 4.26.txt" in parsed.text
+    assert "eac7faf73f64dba833466d3b21c2ce3a" in parsed.text
     assert "Figure caption" in parsed.text
     assert "![Figure caption](images/figure.png)" in parsed.text
     assert len(parsed.assets) == 1
@@ -88,6 +98,20 @@ def test_pdf_parser_uses_mineru_content_list(monkeypatch: pytest.MonkeyPatch) ->
         "document/auto/images/figure.png",
         "./document/auto/images/figure.png",
     ]
+
+
+def test_pdf_text_cleanup_repairs_spacing_without_breaking_html_tags() -> None:
+    """PDF/OCR spacing cleanup should preserve tags while repairing text nodes."""
+
+    cleaned = clean_pdf_extracted_text(
+        "<table><tr><td>V i c t i m</td><td>Num ber</td>"
+        "<td>normal words stay spaced</td></tr></table>"
+    )
+
+    assert cleaned == (
+        "<table><tr><td>Victim</td><td>Number</td>"
+        "<td>normal words stay spaced</td></tr></table>"
+    )
 
 
 def test_pdf_parser_falls_back_to_pypdf_when_mineru_is_missing(

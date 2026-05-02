@@ -112,6 +112,7 @@ async def call_mcp_retrieval(
         "decompose": payload.options.decompose,
         "max_sub_queries": payload.options.max_sub_queries,
         "enable_rerank": payload.options.enable_rerank,
+        "enable_visual_search": payload.options.enable_visual_search,
         "include_metadata": True,
         "include_parent_context": payload.options.include_parent_context,
     }

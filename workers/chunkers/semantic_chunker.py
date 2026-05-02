@@ -1,5 +1,10 @@
 from dataclasses import dataclass, field
-from re import search
+from re import Match, compile, search, sub
+
+MARKDOWN_IMAGE_PATTERN = compile(r"!\s*\[\s*(?P<alt>[^\]]*?)\s*\]\s*\(\s*(?P<target>[^)]+?)\s*\)")
+STRUCTURED_TOKEN_PATTERN = compile(
+    r"^(?:!?\[[^\]]*]\([^)]+\)|https?://\S+|/api/\S+|\.?/?images/\S+)"
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,8 @@ def tokenize_paragraph(paragraph: str) -> list[str]:
     words = paragraph.split()
     if len(words) > 1:
         return words
+    if words and is_structured_token(words[0]):
+        return words
     return [character for character in paragraph if not character.isspace()]
 
 
@@ -66,5 +73,32 @@ def join_tokens(tokens: list[str]) -> str:
     """Reconstruct text without adding spaces to character-tokenized CJK chunks."""
 
     if all(len(token) == 1 for token in tokens):
-        return "".join(tokens)
-    return " ".join(tokens)
+        return normalize_markdown_image_references("".join(tokens))
+    return normalize_markdown_image_references(" ".join(tokens))
+
+
+def is_structured_token(token: str) -> bool:
+    """Return whether a single whitespace-free token should stay intact."""
+
+    return STRUCTURED_TOKEN_PATTERN.search(token) is not None
+
+
+def normalize_markdown_image_references(text: str) -> str:
+    """Collapse accidental spaces inside Markdown image references."""
+
+    def replace_reference(match: Match[str]) -> str:
+        alt = match.group("alt").strip()
+        target = normalize_asset_target(match.group("target"))
+        return f"![{alt}]({target})"
+
+    return MARKDOWN_IMAGE_PATTERN.sub(replace_reference, text)
+
+
+def normalize_asset_target(target: str) -> str:
+    """Remove character-spacing from known generated asset URLs and image paths."""
+
+    stripped = target.strip()
+    compact = sub(r"\s+", "", stripped)
+    if compact.startswith(("/api/", "http://", "https://", "images/", "./images/")):
+        return compact
+    return stripped

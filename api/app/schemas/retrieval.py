@@ -9,6 +9,7 @@ class RetrievalOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enable_rerank: bool = True
+    enable_visual_search: bool = True
     include_parent_context: bool = False
     include_metadata: bool = True
     score_threshold: float | None = Field(default=None, ge=0)

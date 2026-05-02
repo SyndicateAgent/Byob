@@ -4,17 +4,27 @@ from qdrant_client.http import models
 
 from api.app.api.v1.retrieval import build_cache_key
 from api.app.config import Settings
+from api.app.core.clip_embedding import ClipEmbeddingClient
+from api.app.core.qdrant_client import visual_collection_name
 from api.app.main import create_app
 from api.app.models.chunk import Chunk
 from api.app.models.document import Document
+from api.app.models.document_asset import DocumentAsset
 from api.app.schemas.retrieval import RetrievalRequest
+from api.app.services.ingestion_service import (
+    StoredParsedAsset,
+    chunks_by_asset_id,
+    document_asset_api_url,
+)
 from api.app.services.retrieval_service import (
     Candidate,
     build_qdrant_filter,
+    dedupe_asset_keys,
     document_matches_governance_filters,
     rank_scored_chunks_by_authority,
     referenced_asset_keys,
     rrf_fuse,
+    visual_asset_keys_from_points,
 )
 
 
@@ -117,3 +127,78 @@ def test_referenced_asset_keys_parse_byob_asset_urls_once() -> None:
     )
 
     assert referenced_asset_keys(content) == [(document_id, asset_id)]
+
+
+def test_visual_collection_name_is_companion_collection() -> None:
+    """CLIP image vectors are stored in a separate collection per knowledge base."""
+
+    assert visual_collection_name("kb_123") == "kb_123_visual"
+
+
+async def test_clip_warmup_is_noop_when_multimodal_rag_is_disabled() -> None:
+    """Startup model preloading should be skipped when multimodal RAG is disabled."""
+
+    client = ClipEmbeddingClient(
+        Settings(
+            app_env="test",
+            multimodal_rag_enabled=False,
+            clip_preload_on_startup=True,
+        )
+    )
+
+    await client.warmup()
+
+    assert client.enabled is False
+
+
+def test_chunks_by_asset_id_links_images_to_referencing_chunks() -> None:
+    """Visual asset points should route back to the chunk that references the image."""
+
+    document_id = uuid4()
+    kb_id = uuid4()
+    asset_id = uuid4()
+    chunk = Chunk(
+        id=uuid4(),
+        document_id=document_id,
+        kb_id=kb_id,
+        chunk_index=0,
+        content=f"See ![chart]({document_asset_api_url(document_id, asset_id)})",
+    )
+    asset = DocumentAsset(
+        id=asset_id,
+        document_id=document_id,
+        kb_id=kb_id,
+        asset_index=0,
+        source_path="images/chart.png",
+        minio_path="objects/chart.png",
+        content_type="image/png",
+        file_size=4,
+        file_hash="hash",
+    )
+
+    matches = chunks_by_asset_id([chunk], [StoredParsedAsset(row=asset, content=b"data")])
+
+    assert matches[asset_id] is chunk
+
+
+def test_visual_asset_keys_from_points_attach_assets_to_chunks() -> None:
+    """Visual Qdrant hits expose the image asset that caused the match."""
+
+    chunk_id = uuid4()
+    document_id = uuid4()
+    asset_id = uuid4()
+    point = models.ScoredPoint(
+        id=str(asset_id),
+        version=1,
+        score=0.9,
+        payload={
+            "chunk_id": str(chunk_id),
+            "doc_id": str(document_id),
+            "asset_id": str(asset_id),
+        },
+    )
+
+    assert visual_asset_keys_from_points([point]) == {chunk_id: [(document_id, asset_id)]}
+    assert dedupe_asset_keys([(document_id, asset_id), (document_id, asset_id)]) == [
+        (document_id, asset_id)
+    ]

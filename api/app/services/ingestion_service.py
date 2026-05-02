@@ -2,6 +2,7 @@ import mimetypes
 import re
 from collections import Counter
 from collections.abc import Mapping
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import PurePosixPath
 from re import findall
@@ -10,12 +11,14 @@ from uuid import UUID, uuid4
 import httpx
 from qdrant_client.http import models
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.app.config import Settings
+from api.app.core.clip_embedding import ClipEmbeddingClient, is_clip_image_content_type
 from api.app.core.embedding import EmbeddingClient
 from api.app.core.minio_client import MinioClient
-from api.app.core.qdrant_client import QdrantStoreClient
+from api.app.core.qdrant_client import QdrantStoreClient, visual_collection_name
 from api.app.db.session import create_engine, create_session_factory
 from api.app.models.chunk import Chunk
 from api.app.models.document import Document
@@ -25,6 +28,7 @@ from api.app.services.document_service import (
     document_generated_object_prefix,
     document_governance_payload,
     list_document_qdrant_point_ids,
+    list_document_visual_point_ids,
     metadata_with_ingestion_progress,
     refresh_knowledge_base_counts,
 )
@@ -34,6 +38,22 @@ from workers.parsers.pdf_parser import PdfParserConfig
 from workers.parsers.registry import parse_document_bytes
 
 SPARSE_INDEX_MODULUS = 1_000_003
+
+
+@dataclass(frozen=True)
+class StoredParsedAsset:
+    """Persisted asset row paired with its source bytes for CLIP indexing."""
+
+    row: DocumentAsset
+    content: bytes
+
+
+@dataclass(frozen=True)
+class StoredParsedAssets:
+    """Stored parsed assets plus the references needed to rewrite content."""
+
+    replacements: dict[str, str]
+    assets: list[StoredParsedAsset]
 
 
 async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
@@ -51,6 +71,8 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
         settings.dependency_health_timeout_seconds,
     )
     embedding_client = EmbeddingClient(settings)
+    clip_embedding_client = ClipEmbeddingClient(settings)
+    document: Document | None = None
 
     try:
         async with session_factory() as session:
@@ -97,7 +119,15 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             detail="Storing parsed assets",
         )
         async with session_factory() as session:
-            asset_replacements = await store_parsed_assets(
+            stale_visual_point_ids = await list_document_visual_point_ids(session, document)
+        await qdrant_client.delete_points(
+            visual_collection_name(knowledge_base.qdrant_collection),
+            stale_visual_point_ids,
+        )
+        if not await document_exists(session_factory, document.id):
+            return
+        async with session_factory() as session:
+            stored_assets = await store_parsed_assets(
                 session,
                 minio_client,
                 document,
@@ -105,11 +135,13 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             )
             await session.commit()
 
-        parsed_text = rewrite_asset_references(parsed.text, asset_replacements)
+        parsed_text = rewrite_asset_references(parsed.text, stored_assets.replacements)
         parsed_metadata = {
             **parsed.metadata,
             "document_asset_count": len(parsed.assets),
         }
+        if not await document_exists(session_factory, document.id):
+            return
         parsed_content_metadata = await store_parsed_content(
             minio_client,
             document,
@@ -148,7 +180,9 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             document_result = await session.execute(
                 select(Document).where(Document.id == document.id)
             )
-            current_document = document_result.scalar_one()
+            current_document = document_result.scalar_one_or_none()
+            if current_document is None:
+                return
             existing_point_ids = await list_document_qdrant_point_ids(session, current_document)
         await qdrant_client.delete_points(knowledge_base.qdrant_collection, existing_point_ids)
 
@@ -183,11 +217,15 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             document_result = await session.execute(
                 select(Document).where(Document.id == document.id)
             )
-            current_document = document_result.scalar_one()
+            current_document = document_result.scalar_one_or_none()
+            if current_document is None:
+                return
             kb_result = await session.execute(
                 select(KnowledgeBase).where(KnowledgeBase.id == document.kb_id)
             )
-            current_kb = kb_result.scalar_one()
+            current_kb = kb_result.scalar_one_or_none()
+            if current_kb is None:
+                return
             current_document.error_message = None
             current_document.metadata_ = {
                 **current_document.metadata_,
@@ -196,6 +234,22 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             current_document.chunk_count = len(chunks)
             await refresh_knowledge_base_counts(session, current_kb.id)
             await session.commit()
+
+        visual_points: list[models.PointStruct] = []
+        if stored_assets.assets and chunks:
+            await update_document_progress(
+                session_factory,
+                document.id,
+                stage="visual_embedding",
+                progress=88,
+                detail="Embedding extracted images with CLIP",
+            )
+            visual_points = await build_visual_qdrant_points(
+                stored_assets.assets,
+                chunks,
+                document=document,
+                clip_embedding_client=clip_embedding_client,
+            )
 
         await update_document_progress(
             session_factory,
@@ -209,12 +263,21 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             knowledge_base.embedding_dim,
         )
         await qdrant_client.upsert_chunks(knowledge_base.qdrant_collection, points)
+        if visual_points:
+            visual_collection = visual_collection_name(knowledge_base.qdrant_collection)
+            await qdrant_client.ensure_visual_collection(
+                visual_collection,
+                settings.clip_embedding_dimension,
+            )
+            await qdrant_client.upsert_chunks(visual_collection, visual_points)
 
         async with session_factory() as session:
             document_result = await session.execute(
                 select(Document).where(Document.id == document.id)
             )
-            current_document = document_result.scalar_one()
+            current_document = document_result.scalar_one_or_none()
+            if current_document is None:
+                return
             current_document.status = "completed"
             current_document.error_message = None
             current_document.metadata_ = metadata_with_ingestion_progress(
@@ -227,11 +290,19 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
             current_document.chunk_count = len(chunks)
             await refresh_knowledge_base_counts(session, current_document.kb_id)
             await session.commit()
+    except IntegrityError as exc:
+        if not await document_exists(session_factory, document_id):
+            if document is not None:
+                await minio_client.delete_prefix(document_generated_object_prefix(document))
+            return
+        await mark_document_failed(session_factory, document_id, str(exc))
+        raise
     except Exception as exc:
         await mark_document_failed(session_factory, document_id, str(exc))
         raise
     finally:
         await embedding_client.close()
+        await clip_embedding_client.close()
         await qdrant_client.close()
         await minio_client.close()
         await engine.dispose()
@@ -267,15 +338,16 @@ async def store_parsed_assets(
     minio_client: MinioClient,
     document: Document,
     assets: list[ParsedAsset],
-) -> dict[str, str]:
+) -> StoredParsedAssets:
     """Upload parsed assets to MinIO, persist metadata, and return path replacements."""
 
     await session.execute(delete(DocumentAsset).where(DocumentAsset.document_id == document.id))
     replacements: dict[str, str] = {}
     if not assets:
-        return replacements
+        return StoredParsedAssets(replacements=replacements, assets=[])
 
     rows: list[DocumentAsset] = []
+    stored_assets: list[StoredParsedAsset] = []
     for index, asset in enumerate(assets):
         asset_id = uuid4()
         filename = safe_asset_filename(asset.source_path, asset.content_type, index)
@@ -287,26 +359,116 @@ async def store_parsed_assets(
         file_hash = sha256(asset.content).hexdigest()
         asset_url = f"/api/v1/documents/{document.id}/assets/{asset_id}"
         aliases = asset_aliases(asset)
-        rows.append(
-            DocumentAsset(
-                id=asset_id,
-                document_id=document.id,
-                kb_id=document.kb_id,
-                asset_index=index,
-                asset_type=asset.asset_type,
-                source_path=asset.source_path,
-                minio_path=minio_path,
-                content_type=asset.content_type,
-                file_size=len(asset.content),
-                file_hash=file_hash,
-                metadata_={**asset.metadata, "aliases": aliases},
-            )
+        row = DocumentAsset(
+            id=asset_id,
+            document_id=document.id,
+            kb_id=document.kb_id,
+            asset_index=index,
+            asset_type=asset.asset_type,
+            source_path=asset.source_path,
+            minio_path=minio_path,
+            content_type=asset.content_type,
+            file_size=len(asset.content),
+            file_hash=file_hash,
+            metadata_={**asset.metadata, "aliases": aliases},
         )
+        rows.append(row)
+        stored_assets.append(StoredParsedAsset(row=row, content=asset.content))
         for alias in aliases:
             replacements[alias] = asset_url
 
     session.add_all(rows)
-    return replacements
+    return StoredParsedAssets(replacements=replacements, assets=stored_assets)
+
+
+async def build_visual_qdrant_points(
+    assets: list[StoredParsedAsset],
+    chunks: list[Chunk],
+    *,
+    document: Document,
+    clip_embedding_client: ClipEmbeddingClient,
+) -> list[models.PointStruct]:
+    """Build CLIP image vector points linked to the chunks that reference them."""
+
+    if not clip_embedding_client.enabled:
+        return []
+
+    image_assets = [
+        asset
+        for asset in assets
+        if asset.row.asset_type == "image" and is_clip_image_content_type(asset.row.content_type)
+    ]
+    if not image_assets:
+        return []
+
+    embeddings = await clip_embedding_client.embed_images([asset.content for asset in image_assets])
+    chunk_by_asset_id = chunks_by_asset_id(chunks, image_assets)
+    fallback_chunk = chunks[0]
+    points: list[models.PointStruct] = []
+    for index, asset in enumerate(image_assets):
+        chunk = chunk_by_asset_id.get(asset.row.id, fallback_chunk)
+        points.append(
+            build_visual_qdrant_point(
+                asset.row,
+                chunk,
+                visual_vector=embeddings[index],
+                created_at=document.created_at.isoformat(),
+                document=document,
+            )
+        )
+    return points
+
+
+def chunks_by_asset_id(
+    chunks: list[Chunk],
+    assets: list[StoredParsedAsset],
+) -> dict[UUID, Chunk]:
+    """Return the first chunk that explicitly references each asset URL."""
+
+    matches: dict[UUID, Chunk] = {}
+    for asset in assets:
+        url = document_asset_api_url(asset.row.document_id, asset.row.id)
+        for chunk in chunks:
+            if url in chunk.content:
+                matches[asset.row.id] = chunk
+                break
+    return matches
+
+
+def document_asset_api_url(document_id: UUID, asset_id: UUID) -> str:
+    """Return the backend-controlled URL for an asset."""
+
+    return f"/api/v1/documents/{document_id}/assets/{asset_id}"
+
+
+def build_visual_qdrant_point(
+    asset: DocumentAsset,
+    chunk: Chunk,
+    *,
+    visual_vector: list[float],
+    created_at: str,
+    document: Document,
+) -> models.PointStruct:
+    """Build a Qdrant point for one CLIP-indexed image asset."""
+
+    return models.PointStruct(
+        id=str(asset.id),
+        vector={"visual": visual_vector},
+        payload={
+            "asset_id": str(asset.id),
+            "chunk_id": str(chunk.id),
+            "doc_id": str(asset.document_id),
+            "kb_id": str(asset.kb_id),
+            "chunk_type": "image",
+            "asset_type": asset.asset_type,
+            "content_type": asset.content_type,
+            "source_path": asset.source_path,
+            "file_hash": asset.file_hash,
+            "tags": chunk.metadata_.get("tags", []),
+            "created_at": created_at,
+            **document_governance_payload(document),
+        },
+    )
 
 
 async def store_parsed_content(
@@ -478,6 +640,17 @@ async def mark_document_failed(
         await session.commit()
 
 
+async def document_exists(
+    session_factory: async_sessionmaker[AsyncSession],
+    document_id: UUID,
+) -> bool:
+    """Return whether a document still exists while ingestion is running."""
+
+    async with session_factory() as session:
+        result = await session.execute(select(Document.id).where(Document.id == document_id))
+        return result.scalar_one_or_none() is not None
+
+
 async def load_document_content(document: Document, minio_client: MinioClient) -> bytes:
     """Load source content for upload, text, or URL documents."""
 
@@ -544,10 +717,10 @@ def sparse_vector(text: str) -> models.SparseVector:
 
     tokens = findall(r"[\w]+", text.lower())
     counts = Counter(tokens)
-    indices: list[int] = []
-    values: list[float] = []
+    values_by_index: Counter[int] = Counter()
     for token, count in counts.items():
         index = int(sha256(token.encode("utf-8")).hexdigest(), 16) % SPARSE_INDEX_MODULUS
-        indices.append(index)
-        values.append(float(count))
+        values_by_index[index] += count
+    indices = sorted(values_by_index)
+    values = [float(values_by_index[index]) for index in indices]
     return models.SparseVector(indices=indices, values=values)

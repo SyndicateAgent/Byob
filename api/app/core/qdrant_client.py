@@ -1,5 +1,16 @@
+from collections.abc import Mapping
+
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
+from qdrant_client.http.exceptions import UnexpectedResponse
+
+VISUAL_COLLECTION_SUFFIX = "_visual"
+
+
+def visual_collection_name(collection_name: str) -> str:
+    """Return the companion Qdrant collection used for CLIP image vectors."""
+
+    return f"{collection_name}{VISUAL_COLLECTION_SUFFIX}"
 
 
 class QdrantStoreClient:
@@ -17,6 +28,11 @@ class QdrantStoreClient:
         """Verify Qdrant is reachable."""
 
         await self._client.get_collections()
+
+    async def collection_exists(self, collection_name: str) -> bool:
+        """Return whether a collection exists."""
+
+        return bool(await self._client.collection_exists(collection_name))
 
     async def ensure_hybrid_collection(self, collection_name: str, vector_size: int) -> None:
         """Create a collection configured for dense and sparse retrieval if missing."""
@@ -37,6 +53,24 @@ class QdrantStoreClient:
             sparse_vectors_config={"sparse": models.SparseVectorParams()},
         )
 
+    async def ensure_visual_collection(self, collection_name: str, vector_size: int) -> None:
+        """Create a collection configured for CLIP image retrieval if missing."""
+
+        exists = await self._client.collection_exists(collection_name)
+        if exists:
+            return
+
+        await self._client.create_collection(
+            collection_name=collection_name,
+            vectors_config={
+                "visual": models.VectorParams(
+                    size=vector_size,
+                    distance=models.Distance.COSINE,
+                    on_disk=True,
+                )
+            },
+        )
+
     async def upsert_chunks(
         self,
         collection_name: str,
@@ -46,7 +80,16 @@ class QdrantStoreClient:
 
         if not points:
             return
-        await self._client.upsert(collection_name=collection_name, points=points, wait=False)
+        try:
+            await self._client.upsert(collection_name=collection_name, points=points, wait=False)
+        except UnexpectedResponse as exc:
+            response = exc.content.decode("utf-8", errors="replace")
+            summary = describe_points(points)
+            raise RuntimeError(
+                "Qdrant upsert failed "
+                f"collection={collection_name!r} point_count={len(points)} "
+                f"vectors={summary}: {exc.status_code} {exc.reason_phrase}: {response}"
+            ) from exc
 
     async def delete_points(self, collection_name: str, point_ids: list[str]) -> None:
         """Delete chunk vector points from Qdrant by point id."""
@@ -128,7 +171,55 @@ class QdrantStoreClient:
         )
         return list(response.points)
 
+    async def query_visual(
+        self,
+        collection_name: str,
+        vector: list[float],
+        query_filter: models.Filter,
+        limit: int,
+    ) -> list[models.ScoredPoint]:
+        """Query the CLIP visual vector field in a collection."""
+
+        exists = await self._client.collection_exists(collection_name)
+        if not exists:
+            return []
+        response = await self._client.query_points(
+            collection_name=collection_name,
+            query=vector,
+            using="visual",
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return list(response.points)
+
     async def close(self) -> None:
         """Close Qdrant HTTP and gRPC resources."""
 
         await self._client.close()
+
+
+def describe_points(points: list[models.PointStruct]) -> str:
+    """Return a compact vector-shape summary for Qdrant error messages."""
+
+    if not points:
+        return "empty"
+
+    point = points[0]
+    vector = point.vector
+    if isinstance(vector, Mapping):
+        parts = [describe_vector(name, value) for name, value in vector.items()]
+        return "{" + ", ".join(parts) + "}"
+    if isinstance(vector, list):
+        return f"dense:{len(vector)}"
+    return type(vector).__name__
+
+
+def describe_vector(name: str, value: object) -> str:
+    """Return a compact description of one named vector."""
+
+    if isinstance(value, list):
+        return f"{name}:dense:{len(value)}"
+    if isinstance(value, models.SparseVector):
+        return f"{name}:sparse:{len(value.indices)}"
+    return f"{name}:{type(value).__name__}"

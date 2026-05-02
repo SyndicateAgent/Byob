@@ -334,6 +334,17 @@ async def list_document_qdrant_point_ids(session: AsyncSession, document: Docume
     return [str(point_id) for point_id in result.scalars().all() if point_id is not None]
 
 
+async def list_document_visual_point_ids(session: AsyncSession, document: Document) -> list[str]:
+    """Return Qdrant point ids for CLIP-indexed assets belonging to one document."""
+
+    result = await session.execute(
+        select(DocumentAsset.id)
+        .where(DocumentAsset.document_id == document.id)
+        .order_by(DocumentAsset.asset_index.asc())
+    )
+    return [str(asset_id) for asset_id in result.scalars().all()]
+
+
 async def list_document_assets(session: AsyncSession, document: Document) -> list[DocumentAsset]:
     """Return parsed binary assets for one document."""
 

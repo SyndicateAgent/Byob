@@ -61,6 +61,7 @@ export default function AgentPage() {
             decompose: false,
             max_sub_queries: 3,
             enable_rerank: true,
+            enable_visual_search: true,
             include_parent_context: true,
           },
         }),

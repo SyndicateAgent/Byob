@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from api.app.config import Settings, get_settings
+from api.app.core.clip_embedding import ClipEmbeddingClient
 from api.app.core.embedding import EmbeddingClient
 from api.app.core.minio_client import MinioClient
 from api.app.core.qdrant_client import QdrantStoreClient
@@ -49,6 +50,7 @@ class ByobMcpContext:
     session_factory: async_sessionmaker[AsyncSession]
     qdrant_client: QdrantStoreClient
     embedding_client: EmbeddingClient
+    clip_embedding_client: ClipEmbeddingClient
     rerank_client: RerankClient
     minio_client: MinioClient
 
@@ -64,6 +66,9 @@ async def byob_mcp_lifespan(_server: FastMCP) -> AsyncIterator[ByobMcpContext]:
         settings.dependency_health_timeout_seconds,
     )
     embedding_client = EmbeddingClient(settings)
+    clip_embedding_client = ClipEmbeddingClient(settings)
+    if settings.clip_preload_on_startup:
+        await clip_embedding_client.warmup()
     rerank_client = RerankClient(settings)
     minio_client = MinioClient(
         str(settings.minio_endpoint_url),
@@ -77,12 +82,14 @@ async def byob_mcp_lifespan(_server: FastMCP) -> AsyncIterator[ByobMcpContext]:
             session_factory=create_session_factory(engine),
             qdrant_client=qdrant_client,
             embedding_client=embedding_client,
+            clip_embedding_client=clip_embedding_client,
             rerank_client=rerank_client,
             minio_client=minio_client,
         )
     finally:
         await qdrant_client.close()
         await embedding_client.close()
+        await clip_embedding_client.close()
         await rerank_client.close()
         await minio_client.close()
         await engine.dispose()
@@ -152,6 +159,7 @@ async def search_knowledge_base(
     top_k: int = 5,
     filters: dict[str, object] | None = None,
     enable_rerank: bool = True,
+    enable_visual_search: bool = True,
     include_metadata: bool = True,
     include_parent_context: bool = False,
     score_threshold: float | None = None,
@@ -167,6 +175,7 @@ async def search_knowledge_base(
             top_k=top_k,
             filters=filters,
             enable_rerank=enable_rerank,
+            enable_visual_search=enable_visual_search,
             include_metadata=include_metadata,
             include_parent_context=include_parent_context,
             score_threshold=score_threshold,
@@ -176,6 +185,7 @@ async def search_knowledge_base(
             app_context.settings,
             app_context.qdrant_client,
             app_context.embedding_client,
+            app_context.clip_embedding_client,
             app_context.rerank_client,
             request_id=str(uuid4()),
             payload=payload,
@@ -195,6 +205,7 @@ async def advanced_search_knowledge_base(
     max_sub_queries: int = 3,
     filters: dict[str, object] | None = None,
     enable_rerank: bool = True,
+    enable_visual_search: bool = True,
     include_metadata: bool = True,
     include_parent_context: bool = False,
     score_threshold: float | None = None,
@@ -229,6 +240,7 @@ async def advanced_search_knowledge_base(
                 top_k=top_k,
                 filters=filters,
                 enable_rerank=enable_rerank,
+                enable_visual_search=enable_visual_search,
                 include_metadata=include_metadata,
                 include_parent_context=include_parent_context,
                 score_threshold=score_threshold,
@@ -239,6 +251,7 @@ async def advanced_search_knowledge_base(
                     app_context.settings,
                     app_context.qdrant_client,
                     app_context.embedding_client,
+                    app_context.clip_embedding_client,
                     app_context.rerank_client,
                     request_id=str(uuid4()),
                     payload=payload,
@@ -260,6 +273,7 @@ async def multi_search_knowledge_base(
     top_k: int = 5,
     filters: dict[str, object] | None = None,
     enable_rerank: bool = True,
+    enable_visual_search: bool = True,
     include_metadata: bool = True,
 ) -> JsonDict:
     """Run retrieval for multiple Agent sub-questions against BYOB knowledge bases."""
@@ -280,6 +294,7 @@ async def multi_search_knowledge_base(
                 top_k=top_k,
                 filters=filters,
                 enable_rerank=enable_rerank,
+                enable_visual_search=enable_visual_search,
                 include_metadata=include_metadata,
                 include_parent_context=False,
                 score_threshold=None,
@@ -289,6 +304,7 @@ async def multi_search_knowledge_base(
                 app_context.settings,
                 app_context.qdrant_client,
                 app_context.embedding_client,
+                app_context.clip_embedding_client,
                 app_context.rerank_client,
                 request_id=str(uuid4()),
                 payload=payload,
@@ -405,6 +421,7 @@ async def build_retrieval_payload(
     top_k: int,
     filters: dict[str, object] | None,
     enable_rerank: bool,
+    enable_visual_search: bool,
     include_metadata: bool,
     include_parent_context: bool,
     score_threshold: float | None,
@@ -419,6 +436,7 @@ async def build_retrieval_payload(
             filters=filters or {},
             options=RetrievalOptions(
                 enable_rerank=enable_rerank,
+                enable_visual_search=enable_visual_search,
                 include_metadata=include_metadata,
                 include_parent_context=include_parent_context,
                 score_threshold=score_threshold,

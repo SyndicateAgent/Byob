@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.app.core.qdrant_client import visual_collection_name
 from api.app.deps import get_current_user, get_db_session
 from api.app.schemas.auth import CurrentUser
 from api.app.schemas.knowledge_base import (
@@ -114,6 +115,9 @@ async def delete_knowledge_base_endpoint(
         knowledge_base_object_prefix(knowledge_base.id)
     )
     await request.app.state.qdrant_client.delete_collection(knowledge_base.qdrant_collection)
+    await request.app.state.qdrant_client.delete_collection(
+        visual_collection_name(knowledge_base.qdrant_collection)
+    )
     await delete_knowledge_base(session, knowledge_base)
     redis_client = getattr(request.app.state, "redis_client", None)
     if redis_client is not None and hasattr(redis_client, "delete_prefix"):

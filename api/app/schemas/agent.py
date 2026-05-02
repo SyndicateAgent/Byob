@@ -16,6 +16,7 @@ class AgentRetrievalOptions(BaseModel):
     decompose: bool = False
     max_sub_queries: int = Field(default=3, ge=1, le=8)
     enable_rerank: bool = True
+    enable_visual_search: bool = True
     include_parent_context: bool = True
     score_threshold: float | None = Field(default=None, ge=0)
 

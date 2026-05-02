@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     embedding_endpoint_url: AnyUrl = AnyUrl("http://localhost:7997")
     embedding_model: str = "BAAI/bge-m3"
     embedding_dimension: int = 1024
+    multimodal_rag_enabled: bool = True
+    clip_model: str = "openai/clip-vit-base-patch32"
+    clip_embedding_dimension: int = 512
+    clip_device: str = "auto"
+    clip_local_files_only: bool = False
+    clip_preload_on_startup: bool = True
     pdf_parser: Literal["mineru", "pypdf"] = "mineru"
     mineru_command: str = "mineru"
     mineru_backend: str = "pipeline"

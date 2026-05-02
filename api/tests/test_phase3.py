@@ -3,8 +3,11 @@ from types import SimpleNamespace
 from typing import cast
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi import Request
 from pytest import MonkeyPatch
+from qdrant_client.http import models
+from qdrant_client.http.exceptions import UnexpectedResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.app.api.v1 import documents as documents_api
@@ -24,6 +27,7 @@ from api.app.services.ingestion_service import (
     build_qdrant_point,
     parsed_content_type,
     rewrite_asset_references,
+    sparse_vector,
 )
 from workers.chunkers.semantic_chunker import chunk_text
 from workers.parsers.registry import parse_document_bytes
@@ -80,6 +84,35 @@ def test_chunker_splits_cjk_text_with_pdf_line_whitespace() -> None:
     assert all(len(chunk.content) <= 40 for chunk in chunks[:-1])
 
 
+def test_chunker_preserves_markdown_asset_reference() -> None:
+    """Single-token Markdown image references should not be split into spaced chars."""
+
+    asset_url = (
+        "/api/v1/documents/2a5747ab-9c85-4ae6-835d-e8b81c729058"
+        "/assets/d3265b90-751e-4400-b3a8-18f94f2215a5"
+    )
+    text = (
+        "This paragraph has enough regular words to share a chunk with the next block. " * 4
+        + f"\n\n![]({asset_url})\n\n"
+        + "Based on the available evidence, the timeline is consistent."
+    )
+
+    content = "\n".join(chunk.content for chunk in chunk_text(text, chunk_size=90, chunk_overlap=5))
+
+    assert f"![]({asset_url})" in content
+    assert "! [ ]" not in content
+    assert "/ a p i /" not in content
+
+
+def test_chunker_repairs_spaced_markdown_asset_reference() -> None:
+    """Already-spaced image references from PDF extraction are normalized for chunks."""
+
+    text = "Conclusion\n\n! [ ] ( / a p i / v 1 / documents / doc / assets / asset )"
+    content = "\n".join(chunk.content for chunk in chunk_text(text, chunk_size=80, chunk_overlap=0))
+
+    assert "![](/api/v1/documents/doc/assets/asset)" in content
+
+
 def test_qdrant_point_payload_excludes_chunk_content() -> None:
     """Qdrant payload stores identifiers and filters, not source text."""
 
@@ -108,6 +141,17 @@ def test_qdrant_point_payload_excludes_chunk_content() -> None:
     assert point.payload["authority_level"] == 3
 
 
+def test_sparse_vector_merges_hash_index_collisions(monkeypatch: MonkeyPatch) -> None:
+    """Qdrant sparse vectors must not contain duplicate indices."""
+
+    monkeypatch.setattr("api.app.services.ingestion_service.SPARSE_INDEX_MODULUS", 1)
+
+    vector = sparse_vector("alpha beta alpha")
+
+    assert vector.indices == [0]
+    assert vector.values == [3.0]
+
+
 async def test_qdrant_delete_points_skips_empty_ids() -> None:
     """Deleting no point ids should not call Qdrant."""
 
@@ -121,6 +165,46 @@ async def test_qdrant_delete_points_skips_empty_ids() -> None:
     await client.delete_points("kb_collection", [])
 
 
+async def test_qdrant_upsert_wraps_unexpected_response() -> None:
+    """Qdrant upsert failures include collection and vector shape context."""
+
+    class FailingClient:
+        async def upsert(
+            self,
+            *,
+            collection_name: str,
+            points: list[models.PointStruct],
+            wait: bool,
+        ) -> None:
+            raise UnexpectedResponse(
+                422,
+                "Unprocessable Entity",
+                b'{"status":{"error":"bad vector"}}',
+                headers={},
+            )
+
+    point = models.PointStruct(
+        id=str(uuid4()),
+        vector={
+            "dense": [0.1, 0.2],
+            "sparse": models.SparseVector(indices=[1, 2], values=[1.0, 2.0]),
+        },
+        payload={},
+    )
+    client = QdrantStoreClient.__new__(QdrantStoreClient)
+    client._client = FailingClient()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await client.upsert_chunks("kb_collection", [point])
+
+    message = str(exc_info.value)
+    assert "collection='kb_collection'" in message
+    assert "point_count=1" in message
+    assert "dense:dense:2" in message
+    assert "sparse:sparse:2" in message
+    assert "bad vector" in message
+
+
 async def test_reprocess_deletes_existing_qdrant_points_before_reset(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -130,6 +214,7 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
     kb_id = uuid4()
     document_id = uuid4()
     old_point_id = uuid4()
+    old_visual_point_id = uuid4()
     document = Document(
         id=document_id,
         kb_id=kb_id,
@@ -202,6 +287,14 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
         assert selected_document is document
         return [str(old_point_id)]
 
+    async def fake_list_document_visual_point_ids(
+        session: AsyncSession,
+        selected_document: Document,
+    ) -> list[str]:
+        calls.append("list_visual_point_ids")
+        assert selected_document is document
+        return [str(old_visual_point_id)]
+
     async def fake_reset_document_for_reprocess(
         session: AsyncSession,
         selected_document: Document,
@@ -210,7 +303,10 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
         calls.append("reset")
         assert selected_document is document
         assert "actor" in kwargs
-        assert qdrant_client.deleted == [("kb_collection", [str(old_point_id)])]
+        assert qdrant_client.deleted == [
+            ("kb_collection", [str(old_point_id)]),
+            ("kb_collection_visual", [str(old_visual_point_id)]),
+        ]
         assert minio_client.deleted_prefixes == [
             f"knowledge_bases/{kb_id}/documents/{document_id}/"
         ]
@@ -231,6 +327,11 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
     )
     monkeypatch.setattr(
         documents_api,
+        "list_document_visual_point_ids",
+        fake_list_document_visual_point_ids,
+    )
+    monkeypatch.setattr(
+        documents_api,
         "reset_document_for_reprocess",
         fake_reset_document_for_reprocess,
     )
@@ -247,6 +348,8 @@ async def test_reprocess_deletes_existing_qdrant_points_before_reset(
         "get_document",
         "get_knowledge_base",
         "list_point_ids",
+        "list_visual_point_ids",
+        "delete_points",
         "delete_points",
         "delete_prefix",
         "reset",
@@ -265,6 +368,7 @@ async def test_content_update_deletes_vectors_before_reindex(
     kb_id = uuid4()
     document_id = uuid4()
     old_point_id = uuid4()
+    old_visual_point_id = uuid4()
     document = Document(
         id=document_id,
         kb_id=kb_id,
@@ -343,6 +447,14 @@ async def test_content_update_deletes_vectors_before_reindex(
         assert selected_document is document
         return [str(old_point_id)]
 
+    async def fake_list_document_visual_point_ids(
+        session: AsyncSession,
+        selected_document: Document,
+    ) -> list[str]:
+        calls.append("list_visual_point_ids")
+        assert selected_document is document
+        return [str(old_visual_point_id)]
+
     async def fake_update_document_content_source(
         session: AsyncSession,
         selected_document: Document,
@@ -352,7 +464,10 @@ async def test_content_update_deletes_vectors_before_reindex(
         calls.append("update_content")
         assert selected_document is document
         assert "actor" in kwargs
-        assert qdrant_client.deleted == [("kb_collection", [str(old_point_id)])]
+        assert qdrant_client.deleted == [
+            ("kb_collection", [str(old_point_id)]),
+            ("kb_collection_visual", [str(old_visual_point_id)]),
+        ]
         assert minio_client.deleted_prefixes == [
             f"knowledge_bases/{kb_id}/documents/{document_id}/"
         ]
@@ -377,6 +492,11 @@ async def test_content_update_deletes_vectors_before_reindex(
     )
     monkeypatch.setattr(
         documents_api,
+        "list_document_visual_point_ids",
+        fake_list_document_visual_point_ids,
+    )
+    monkeypatch.setattr(
+        documents_api,
         "update_document_content_source",
         fake_update_document_content_source,
     )
@@ -394,6 +514,8 @@ async def test_content_update_deletes_vectors_before_reindex(
         "get_document",
         "get_knowledge_base",
         "list_point_ids",
+        "list_visual_point_ids",
+        "delete_points",
         "delete_points",
         "delete_prefix",
         "delete_object",
@@ -414,6 +536,7 @@ async def test_delete_document_removes_minio_before_db_delete(
     kb_id = uuid4()
     document_id = uuid4()
     old_point_id = uuid4()
+    old_visual_point_id = uuid4()
     document = Document(
         id=document_id,
         kb_id=kb_id,
@@ -438,10 +561,12 @@ async def test_delete_document_removes_minio_before_db_delete(
     calls: list[str] = []
 
     class FakeQdrantClient:
+        def __init__(self) -> None:
+            self.deleted: list[tuple[str, list[str]]] = []
+
         async def delete_points(self, collection_name: str, point_ids: list[str]) -> None:
             calls.append("delete_points")
-            assert collection_name == "kb_collection"
-            assert point_ids == [str(old_point_id)]
+            self.deleted.append((collection_name, point_ids))
 
     class FakeMinioClient:
         async def delete_prefix(self, prefix: str) -> int:
@@ -458,7 +583,7 @@ async def test_delete_document_removes_minio_before_db_delete(
         SimpleNamespace(
             app=SimpleNamespace(
                 state=SimpleNamespace(
-                    qdrant_client=FakeQdrantClient(),
+                        qdrant_client=(qdrant_client := FakeQdrantClient()),
                     minio_client=FakeMinioClient(),
                 )
             )
@@ -486,6 +611,14 @@ async def test_delete_document_removes_minio_before_db_delete(
         assert selected_document is document
         return [str(old_point_id)]
 
+    async def fake_list_document_visual_point_ids(
+        session: AsyncSession,
+        selected_document: Document,
+    ) -> list[str]:
+        calls.append("list_visual_point_ids")
+        assert selected_document is document
+        return [str(old_visual_point_id)]
+
     async def fake_delete_document(
         session: AsyncSession,
         selected_document: Document,
@@ -502,6 +635,11 @@ async def test_delete_document_removes_minio_before_db_delete(
         "list_document_qdrant_point_ids",
         fake_list_document_qdrant_point_ids,
     )
+    monkeypatch.setattr(
+        documents_api,
+        "list_document_visual_point_ids",
+        fake_list_document_visual_point_ids,
+    )
     monkeypatch.setattr(documents_api, "delete_document", fake_delete_document)
 
     await documents_api.delete_document_endpoint(
@@ -515,10 +653,16 @@ async def test_delete_document_removes_minio_before_db_delete(
         "get_document",
         "get_knowledge_base",
         "list_point_ids",
+        "list_visual_point_ids",
+        "delete_points",
         "delete_points",
         "delete_prefix",
         "delete_object",
         "delete_document",
+    ]
+    assert qdrant_client.deleted == [
+        ("kb_collection", [str(old_point_id)]),
+        ("kb_collection_visual", [str(old_visual_point_id)]),
     ]
 
 
@@ -538,9 +682,12 @@ async def test_delete_knowledge_base_removes_storage_before_db_delete(
             return 5
 
     class FakeQdrantClient:
+        def __init__(self) -> None:
+            self.deleted_collections: list[str] = []
+
         async def delete_collection(self, collection_name: str) -> None:
             calls.append("delete_collection")
-            assert collection_name == "kb_collection"
+            self.deleted_collections.append(collection_name)
 
     class FakeRedisClient:
         async def delete_prefix(self, prefix: str) -> int:
@@ -554,7 +701,7 @@ async def test_delete_knowledge_base_removes_storage_before_db_delete(
             app=SimpleNamespace(
                 state=SimpleNamespace(
                     minio_client=FakeMinioClient(),
-                    qdrant_client=FakeQdrantClient(),
+                        qdrant_client=(qdrant_client := FakeQdrantClient()),
                     redis_client=FakeRedisClient(),
                 )
             )
@@ -590,9 +737,11 @@ async def test_delete_knowledge_base_removes_storage_before_db_delete(
         "get_knowledge_base",
         "delete_prefix",
         "delete_collection",
+        "delete_collection",
         "delete_kb",
         "clear_cache",
     ]
+    assert qdrant_client.deleted_collections == ["kb_collection", "kb_collection_visual"]
 
 
 def test_asset_references_are_rewritten_in_markdown_and_html() -> None:
