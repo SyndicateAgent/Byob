@@ -1,5 +1,10 @@
 # BYOB
 
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688)](https://fastapi.tiangolo.com/)
+[![Next.js](https://img.shields.io/badge/Frontend-Next.js-000000)](https://nextjs.org/)
+[![MCP](https://img.shields.io/badge/MCP-stdio%20%7C%20HTTP-5B5BD6)](https://modelcontextprotocol.io/)
+
 BYOB is a self-hosted vector database management system built for AI Agent retrieval. It helps you turn local files and knowledge sources into searchable vector collections, expose them through HTTP APIs and MCP tools, and quickly test RAG quality from a local management console.
 
 BYOB 是一个面向 AI Agent 检索场景的自部署向量数据库管理系统。它用于把本地文件和知识资料整理成可检索的向量知识库，并通过 HTTP API、MCP 工具和本地控制台交给 AI Agent 使用。
@@ -9,7 +14,9 @@ BYOB 是一个面向 AI Agent 检索场景的自部署向量数据库管理系�
 ## 目录 / Contents
 
 - [中文说明](#中文说明)
+- [快速开始](#快速开始)
 - [English Guide](#english-guide)
+- [Quick Start](#quick-start)
 
 ## 中文说明
 
@@ -17,7 +24,7 @@ BYOB 是一个面向 AI Agent 检索场景的自部署向量数据库管理系�
 
 BYOB 的目标是让个人或团队快速搭建一套给 AI Agent 使用的本地知识库与向量检索服务。它关注的是文档导入、解析、切分、向量化、混合检索、重排、MCP 暴露和 RAG 效果测试。
 
-BYOB 包含一个简单的控制台 QA Agent，用于验证 MCP-backed RAG 的召回与回答效果。它不是生产级 Agent 编排平台，也不提供多租户、计费、用量分析、面向公网的 API Key 管理或复杂对话状态管理。
+BYOB 包含一个控制台 QA Agent，用于验证 MCP-backed RAG 的召回与回答效果，并可接入 OpenAI-compatible LLM 生成带来源引用的 Markdown 答案。
 
 ### 核心能力
 
@@ -59,11 +66,11 @@ FastAPI API -> Infinity embedding/rerank
 
 AI Agent -> MCP stdio or Streamable HTTP
 MCP transport -> BYOB MCP Server
-BYOB MCP Server -> Retrieval APIs
+BYOB MCP Server -> PostgreSQL / Qdrant / MinIO / model clients
 
 Console QA Agent -> FastAPI /api/v1/agent/ask
 FastAPI Agent endpoint -> MCP HTTP
-MCP HTTP -> Retrieval APIs
+MCP HTTP -> BYOB MCP Server
 ```
 
 ### 默认端口
@@ -82,6 +89,33 @@ MCP HTTP -> Retrieval APIs
 | Embedding service | `http://127.0.0.1:7997` |
 | Rerank service | `http://127.0.0.1:7998` |
 | MCP Streamable HTTP | `http://127.0.0.1:8010/mcp` |
+
+## 快速开始
+
+下面的流程适合本地开发和单机自部署验证。它会先启动依赖服务，再用 `start-dev.py` 同时拉起 API、Celery Worker、MCP Streamable HTTP 和前端控制台。
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d
+uv sync --extra dev
+uv run alembic upgrade head
+uv run python -m api.scripts.seed_admin
+uv run python start-dev.py --install-frontend
+```
+
+启动完成后访问：
+
+- Console: `http://localhost:3000`
+- API health: `http://localhost:8000/healthz`
+- MCP HTTP: `http://127.0.0.1:8010/mcp`
+
+按需只启动部分服务：
+
+```powershell
+uv run python start-dev.py --services api frontend
+uv run python start-dev.py --worker-only
+uv run python start-dev.py --mcp-only
+```
 
 ### 部署前准备
 
@@ -183,21 +217,39 @@ uv run python -m api.scripts.seed_admin
 
 如果不设置 `BYOB_ADMIN_PASSWORD`，脚本会生成一个强密码并只打印一次。已有用户不会被覆盖，除非设置 `BYOB_ADMIN_RESET_PASSWORD=true`。
 
-#### 7. 启动 API 服务
+#### 7. 启动应用服务（推荐）
 
-新开一个终端，在项目根目录运行：
+`start-dev.py` 是跨 Windows、macOS、Linux 的开发启动器，会同时启动 API、Celery Worker、MCP Streamable HTTP 和前端控制台：
+
+```powershell
+uv run python start-dev.py --install-frontend
+```
+
+默认地址：
+
+- Console：`http://localhost:3000`
+- API：`http://localhost:8000`
+- Health：`http://localhost:8000/healthz`
+- Metrics：`http://localhost:8000/metrics`
+- MCP Streamable HTTP：`http://127.0.0.1:8010/mcp`
+
+也可以只启动部分服务：
+
+```powershell
+uv run python start-dev.py --services api frontend
+uv run python start-dev.py --worker-only
+uv run python start-dev.py --mcp-only
+```
+
+#### 8. 手动启动 API
+
+如需拆分终端运行，新开一个终端，在项目根目录运行：
 
 ```powershell
 uv run uvicorn api.app.main:app --reload
 ```
 
-默认 API 地址：
-
-- `http://localhost:8000`
-- 健康检查：`http://localhost:8000/healthz`
-- Metrics：`http://localhost:8000/metrics`
-
-#### 8. 启动文档导入 Worker
+#### 9. 手动启动文档导入 Worker
 
 处理上传文件、解析文档、切分 chunk、生成 embedding 时需要 Celery Worker。新开一个终端，在项目根目录运行：
 
@@ -207,30 +259,18 @@ uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=IN
 
 Windows 下 Worker 默认使用 Celery `solo` pool，用来避免进程池在部分 Windows 环境中出现 `billiard` handle 错误。
 
-#### 9. 启动前端控制台
-
-新开一个终端：
-
-```powershell
-Set-Location frontend
-npm install
-npm run dev
-```
-
-打开：
-
-```text
-http://localhost:3000
-```
-
-使用第 6 步创建的管理员账号登录。控制台侧边栏包含 Knowledge Bases、Documents、Retrieval Console、QA Agent、MCP Guide、MinIO Web UI 和 Qdrant Dashboard 等入口。
-
-#### 10. 启动 MCP 服务
+#### 10. 手动启动 MCP 服务
 
 大多数 MCP 客户端使用 stdio transport：
 
 ```powershell
 uv run python -m api.app.mcp_server
+```
+
+控制台 `/agent` 页面需要 Streamable HTTP MCP 服务。新开一个终端，在项目根目录运行：
+
+```powershell
+uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1 --port 8010
 ```
 
 示例 MCP 客户端配置：
@@ -247,11 +287,23 @@ uv run python -m api.app.mcp_server
 }
 ```
 
-控制台 `/agent` 页面需要 Streamable HTTP MCP 服务。新开一个终端，在项目根目录运行：
+#### 11. 手动启动前端控制台
+
+新开一个终端：
 
 ```powershell
-uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1 --port 8010
+Set-Location frontend
+npm install
+npm run dev
 ```
+
+打开：
+
+```text
+http://localhost:3000
+```
+
+使用第 6 步创建的管理员账号登录。控制台侧边栏包含 Knowledge Bases、Documents、Retrieval Console、QA Agent、MCP Guide、MinIO Web UI 和 Qdrant Dashboard 等入口。
 
 更多 MCP 工具参数、示例和排查方式见 [docs/mcp.md](docs/mcp.md)，控制台里也可以打开 `/mcp` 页面查看。
 
@@ -348,8 +400,7 @@ MCP 工具：
 5. 使用 Nginx、Caddy、Traefik 或云网关提供 HTTPS、压缩、访问日志和鉴权策略。
 6. 设置正确的 `CORS_ALLOWED_ORIGINS`、`NEXT_PUBLIC_API_BASE_URL`、`NEXT_PUBLIC_MINIO_CONSOLE_URL` 和 `NEXT_PUBLIC_QDRANT_DASHBOARD_URL`。
 7. 生产迁移流程固定为：停止写入或进入维护窗口、备份数据库、更新代码、同步依赖、执行 `uv run alembic upgrade head`、重启 API/Worker/MCP/Frontend。
-8. MCP HTTP 服务不要直接暴露公网；如果必须远程访问，应放在 VPN、内网、反向代理鉴权或现有网关后面。
-9. 监控 `GET /healthz`、`GET /metrics`、Worker 日志、Qdrant/MinIO/PostgreSQL 存储容量和模型服务健康状态。
+8. 监控 `GET /healthz`、`GET /metrics`、Worker 日志、Qdrant/MinIO/PostgreSQL 存储容量和模型服务健康状态。
 
 ### 更新与重新部署
 
@@ -396,7 +447,7 @@ npm run build
 
 BYOB is a self-hosted vector database management system for AI Agent retrieval. It focuses on knowledge base management, document ingestion, parsing, chunking, embedding, hybrid search, reranking, MCP tool exposure, and local RAG evaluation.
 
-BYOB includes a lightweight console QA Agent for testing MCP-backed RAG results. It is not a production Agent orchestration framework, and it does not provide multi-tenancy, billing, usage analytics, public API key management, or complex conversation-state management.
+BYOB includes a console QA Agent for testing MCP-backed RAG results and can connect to an OpenAI-compatible LLM to generate Markdown answers with source citations.
 
 ### Features
 
@@ -438,11 +489,11 @@ FastAPI API -> Infinity embedding/rerank
 
 AI Agent -> MCP stdio or Streamable HTTP
 MCP transport -> BYOB MCP Server
-BYOB MCP Server -> Retrieval APIs
+BYOB MCP Server -> PostgreSQL / Qdrant / MinIO / model clients
 
 Console QA Agent -> FastAPI /api/v1/agent/ask
 FastAPI Agent endpoint -> MCP HTTP
-MCP HTTP -> Retrieval APIs
+MCP HTTP -> BYOB MCP Server
 ```
 
 ### Default Ports
@@ -461,6 +512,33 @@ MCP HTTP -> Retrieval APIs
 | Embedding service | `http://127.0.0.1:7997` |
 | Rerank service | `http://127.0.0.1:7998` |
 | MCP Streamable HTTP | `http://127.0.0.1:8010/mcp` |
+
+## Quick Start
+
+The following flow is intended for local development and single-host self-hosted validation. It starts dependency services first, then uses `start-dev.py` to run the API, Celery Worker, MCP Streamable HTTP server, and frontend console together.
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d
+uv sync --extra dev
+uv run alembic upgrade head
+uv run python -m api.scripts.seed_admin
+uv run python start-dev.py --install-frontend
+```
+
+Open:
+
+- Console: `http://localhost:3000`
+- API health: `http://localhost:8000/healthz`
+- MCP HTTP: `http://127.0.0.1:8010/mcp`
+
+Start selected services when needed:
+
+```powershell
+uv run python start-dev.py --services api frontend
+uv run python start-dev.py --worker-only
+uv run python start-dev.py --mcp-only
+```
 
 ### Prerequisites
 
@@ -562,21 +640,39 @@ uv run python -m api.scripts.seed_admin
 
 If `BYOB_ADMIN_PASSWORD` is omitted, the script generates a strong password and prints it once. Existing users are not overwritten unless `BYOB_ADMIN_RESET_PASSWORD=true` is set.
 
-#### 7. Start the API
+#### 7. Start application services
 
-Open a new terminal at the repository root:
+`start-dev.py` is a cross-platform development launcher for Windows, macOS, and Linux. It starts the API, Celery Worker, MCP Streamable HTTP server, and frontend console together:
+
+```powershell
+uv run python start-dev.py --install-frontend
+```
+
+Default endpoints:
+
+- Console: `http://localhost:3000`
+- API: `http://localhost:8000`
+- Health: `http://localhost:8000/healthz`
+- Metrics: `http://localhost:8000/metrics`
+- MCP Streamable HTTP: `http://127.0.0.1:8010/mcp`
+
+You can also start a subset:
+
+```powershell
+uv run python start-dev.py --services api frontend
+uv run python start-dev.py --worker-only
+uv run python start-dev.py --mcp-only
+```
+
+#### 8. Start the API manually
+
+When splitting services across terminals, open a new terminal at the repository root:
 
 ```powershell
 uv run uvicorn api.app.main:app --reload
 ```
 
-Default endpoints:
-
-- API: `http://localhost:8000`
-- Health: `http://localhost:8000/healthz`
-- Metrics: `http://localhost:8000/metrics`
-
-#### 8. Start the ingestion worker
+#### 9. Start the ingestion worker manually
 
 Document parsing, chunking, embedding, and ingestion tasks require the Celery Worker. Open another terminal at the repository root:
 
@@ -586,30 +682,18 @@ uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=IN
 
 On Windows the worker defaults to Celery's `solo` pool to avoid process-pool handle errors in some environments.
 
-#### 9. Start the frontend console
-
-Open another terminal:
-
-```powershell
-Set-Location frontend
-npm install
-npm run dev
-```
-
-Open:
-
-```text
-http://localhost:3000
-```
-
-Log in with the admin created earlier. The sidebar includes Knowledge Bases, Documents, Retrieval Console, QA Agent, MCP Guide, MinIO Web UI, and Qdrant Dashboard.
-
-#### 10. Start MCP
+#### 10. Start MCP manually
 
 Most MCP clients expect stdio transport:
 
 ```powershell
 uv run python -m api.app.mcp_server
+```
+
+The console QA Agent at `/agent` requires Streamable HTTP MCP:
+
+```powershell
+uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1 --port 8010
 ```
 
 Example MCP client configuration:
@@ -626,11 +710,23 @@ Example MCP client configuration:
 }
 ```
 
-The console QA Agent at `/agent` requires Streamable HTTP MCP:
+#### 11. Start the frontend console manually
+
+Open another terminal:
 
 ```powershell
-uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1 --port 8010
+Set-Location frontend
+npm install
+npm run dev
 ```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+Log in with the admin created earlier. The sidebar includes Knowledge Bases, Documents, Retrieval Console, QA Agent, MCP Guide, MinIO Web UI, and Qdrant Dashboard.
 
 See [docs/mcp.md](docs/mcp.md) or the console `/mcp` page for full MCP tool parameters, examples, and troubleshooting.
 
@@ -725,8 +821,7 @@ The current Compose file is intended for dependency services. For production or 
 5. Use Nginx, Caddy, Traefik, or a cloud gateway for HTTPS, compression, access logs, and access control.
 6. Set `CORS_ALLOWED_ORIGINS`, `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_MINIO_CONSOLE_URL`, and `NEXT_PUBLIC_QDRANT_DASHBOARD_URL` for your deployment hostnames.
 7. Use a repeatable upgrade flow: stop writes or enter maintenance mode, back up the database, update code, sync dependencies, run `uv run alembic upgrade head`, then restart API, Worker, MCP, and frontend services.
-8. Do not expose MCP HTTP directly to the public internet. Put it behind VPN, a private network, reverse-proxy authentication, or an existing gateway if remote access is required.
-9. Monitor `GET /healthz`, `GET /metrics`, Worker logs, storage capacity, and model-service health.
+8. Monitor `GET /healthz`, `GET /metrics`, Worker logs, storage capacity, and model-service health.
 
 ### Update and Redeploy
 

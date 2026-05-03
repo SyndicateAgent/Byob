@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="BYOB is a self-hosted vector database management system for AI Agent retrieval, MCP tools, and RAG testing."
+      content="BYOB is a self-hosted vector knowledge base for AI Agent retrieval, document ingestion, multimodal RAG, MCP tools, and local QA testing."
     />
     <title>BYOB Documentation</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -24,7 +24,7 @@
         </a>
         <nav class="nav" aria-label="Main navigation">
           <a href="#overview">项目介绍</a>
-          <a href="#deploy">部署流程</a>
+          <a href="#deploy">快速部署</a>
           <a href="#mcp">MCP</a>
           <a href="#api">API</a>
           <a href="#production">生产建议</a>
@@ -40,8 +40,8 @@
             <p class="eyebrow">BYOB Project Documentation</p>
             <h1>给 AI Agent 使用的自部署向量数据库管理系统</h1>
             <p class="lead">
-              BYOB 将文档导入、解析、切分、向量化、混合检索、重排、MCP 工具暴露和
-              RAG 效果测试整合到一套本地优先的管理系统中。
+              BYOB 将文档导入、结构化解析、资源存储、混合检索、多模态召回、MCP 工具和
+              QA Agent 测试台整合到一套本地优先的知识库系统中。
             </p>
             <div class="hero-actions" aria-label="Primary actions">
               <a class="button primary" href="#deploy">开始部署</a>
@@ -75,12 +75,12 @@
             <p class="section-kicker">Overview</p>
             <h2>项目介绍</h2>
             <p>
-              BYOB 的定位不是 SaaS 平台，而是一套适合自部署的向量知识库系统。它帮助个人
-              或团队快速建立可由 AI Agent 调用的检索基础设施，并提供一个本地控制台来管理
-              知识库、文档、chunk、检索测试和 MCP 使用说明。
+              BYOB 的定位不是 SaaS 平台，而是一套适合可信网络内部署的向量知识库系统。它帮助个人
+              或团队建立可由 AI Agent 调用的检索基础设施，并提供本地控制台来管理知识库、文档、
+              资源、chunk、治理状态、检索测试和 MCP 使用说明。
             </p>
             <p>
-              项目内置的 QA Agent 只用于快速验证 MCP-backed RAG 效果。它可以接入
+              项目内置的 QA Agent 用于快速验证 MCP-backed RAG 效果。它可以接入
               OpenAI-compatible Chat Completions，也可以在未配置 LLM 时返回抽取式 Markdown
               答案，方便检查召回质量。
             </p>
@@ -88,11 +88,11 @@
           <div class="card-list">
             <article>
               <h3>自部署优先</h3>
-              <p>依赖服务通过 Docker Compose 启动，API、Worker、MCP 和前端可按需独立运行。</p>
+              <p>依赖服务通过 Docker Compose 启动，API、Worker、MCP 和前端可用一键脚本或按需独立运行。</p>
             </article>
             <article>
               <h3>面向 Agent</h3>
-              <p>提供直接检索 API 和 MCP 工具，让 Agent 可以以工具形式访问知识库。</p>
+              <p>提供直接检索 API、MCP 工具和 asset 获取能力，让 Agent 可以以工具形式访问知识库。</p>
             </article>
             <article>
               <h3>可观察可测试</h3>
@@ -109,15 +109,15 @@
           <div class="feature-grid">
             <article>
               <h3>知识库与文档管理</h3>
-              <p>创建知识库，批量导入文档，按文件名和 SHA-256 hash 自动跳过重复文件。</p>
+              <p>创建知识库，上传文件、批量导入、文本导入、URL 导入和 JPEG/PNG 图片导入，按文件名和 SHA-256 hash 自动跳过重复文件。</p>
             </article>
             <article>
               <h3>解析与资源处理</h3>
-              <p>支持 Markdown、TXT、DOCX、PDF；PDF 默认使用 MinerU，图片资源保存到 MinIO。</p>
+              <p>支持 Markdown、TXT、HTML、PDF、DOCX、PPT、PPTX、XLSX、JPEG 和 PNG；MinerU content_list 优先，图片与解析资源保存到 MinIO。</p>
             </article>
             <article>
               <h3>向量检索</h3>
-              <p>使用 Qdrant 存储向量，支持高级检索、多查询检索、metadata 和父级上下文。</p>
+              <p>使用 Qdrant 存储 dense、sparse 和可选 visual vectors，支持高级检索、多查询检索、metadata、父级上下文和反馈记录。</p>
             </article>
             <article>
               <h3>知识库治理</h3>
@@ -126,6 +126,10 @@
             <article>
               <h3>Embedding 与 Rerank</h3>
               <p>默认通过 Infinity 运行 BGE embedding 和 reranker 服务，便于本地部署。</p>
+            </article>
+            <article>
+              <h3>多模态 RAG</h3>
+              <p>使用 CLIP 为图片资源建立视觉索引，文本查询可召回相关图片并与文本检索结果融合。</p>
             </article>
             <article>
               <h3>MCP Server</h3>
@@ -142,7 +146,7 @@
       <section id="deploy" class="section">
         <div class="container">
           <p class="section-kicker">Deployment</p>
-          <h2>本地部署流程</h2>
+          <h2>快速开始与本地部署</h2>
           <div class="steps">
             <article class="step">
               <span>1</span>
@@ -194,20 +198,19 @@ uv run python -m api.scripts.seed_admin</code></pre>
             <article class="step">
               <span>6</span>
               <div>
-                <h3>启动后端与 Worker</h3>
-                <p>API 和文档导入 Worker 建议放在不同终端运行。</p>
-                <pre><code>uv run uvicorn api.app.main:app --reload
-uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO</code></pre>
+                <h3>一键启动应用服务</h3>
+                <p>跨 Windows、macOS、Linux 同时启动 API、Celery Worker、MCP Streamable HTTP 和前端控制台。</p>
+                <pre><code>uv run python start-dev.py --install-frontend</code></pre>
               </div>
             </article>
             <article class="step">
               <span>7</span>
               <div>
-                <h3>启动前端控制台</h3>
-                <p>默认访问地址为 http://localhost:3000。</p>
-                <pre><code>Set-Location frontend
-npm install
-npm run dev</code></pre>
+                <h3>按需拆分启动</h3>
+                <p>开发时可以只启动部分服务，或者继续使用手动命令独立运行 API、Worker、MCP 和前端。</p>
+                <pre><code>uv run python start-dev.py --services api frontend
+uv run python start-dev.py --worker-only
+uv run python start-dev.py --mcp-only</code></pre>
               </div>
             </article>
           </div>
@@ -268,6 +271,16 @@ npm run dev</code></pre>
                   <td>QA Agent 每次最多传给多模态模型的图片数量</td>
                   <td><code>3</code></td>
                 </tr>
+                <tr>
+                  <td><code>MULTIMODAL_RAG_ENABLED</code></td>
+                  <td>是否启用图片视觉向量索引和 CLIP 检索</td>
+                  <td><code>true</code></td>
+                </tr>
+                <tr>
+                  <td><code>CLIP_PRELOAD_ON_STARTUP</code></td>
+                  <td>API、Worker 和 MCP 启动时是否预加载 CLIP</td>
+                  <td><code>true</code></td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -281,7 +294,7 @@ npm run dev</code></pre>
             <h2>MCP 与 QA Agent</h2>
             <p>
               BYOB MCP Server 暴露知识库列表、文档列表、普通检索、高级检索、多检索、
-              chunk 获取以及 document asset 获取工具。召回结果会带出 chunk 中引用的图片/
+              chunk 获取、asset 列表和 document asset 获取工具。召回结果会带出 chunk 中引用的图片/
               文件 manifest，控制台 QA Agent 可以把图片作为多模态输入交给 LLM。
               大多数 MCP 客户端使用 stdio transport，控制台 QA Agent 使用 Streamable HTTP transport。
             </p>
@@ -321,6 +334,8 @@ uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1
               <ul>
                 <li><code>GET /api/v1/knowledge-bases</code></li>
                 <li><code>POST /api/v1/knowledge-bases/{kb_id}/documents/batch</code></li>
+                <li><code>PATCH /api/v1/documents/{document_id}/governance</code></li>
+                <li><code>GET /api/v1/documents/{document_id}/assets</code></li>
                 <li><code>GET /api/v1/documents/{document_id}/chunks</code></li>
               </ul>
             </article>
@@ -330,6 +345,8 @@ uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1
                 <li><code>POST /api/v1/retrieval/search</code></li>
                 <li><code>POST /api/v1/retrieval/search/advanced</code></li>
                 <li><code>POST /api/v1/retrieval/multi-search</code></li>
+                <li><code>POST /api/v1/retrieval/embed</code></li>
+                <li><code>POST /api/v1/agent/ask</code></li>
               </ul>
             </article>
             <article>
@@ -353,13 +370,15 @@ uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1
             <p>
               当前 Compose 文件主要用于依赖服务。长期自部署时，建议将 API、Worker、MCP
               Server 和前端纳入 systemd、Supervisor、PM2 或容器平台，并使用反向代理提供
-              HTTPS、访问日志和鉴权策略。
+              HTTPS、访问日志和鉴权策略。检索 API 和 MCP 默认服务于可信网络内的 Agent，
+              不应直接暴露到公网。
             </p>
           </div>
           <ul class="check-list">
             <li>替换 <code>JWT_SECRET_KEY</code>、PostgreSQL 密码和 MinIO 凭据。</li>
             <li>为 PostgreSQL、Qdrant、MinIO、Redis 配置持久化和备份。</li>
             <li>只在可信网络暴露数据库、Redis、Qdrant、MinIO 和 MCP HTTP。</li>
+            <li>公网入口建议只暴露前端和 API，并放在反向代理、VPN 或现有身份体系之后。</li>
             <li>正确设置 <code>CORS_ALLOWED_ORIGINS</code> 和前端公开 URL。</li>
             <li>监控 <code>/healthz</code>、<code>/metrics</code>、Worker 日志和存储容量。</li>
           </ul>

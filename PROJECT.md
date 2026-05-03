@@ -1,6 +1,6 @@
 # BYOB 自部署向量数据库管理系统
 
-BYOB 的目标是让用户快速搭建一个供 AI Agent 使用的自部署向量数据库管理系统。它负责知识库、文档、切块、向量索引和检索 API，不实现 Agent 编排、不保存对话状态、不管理 Prompt 模板，也不绑定特定 LLM。
+BYOB 的目标是让用户快速搭建一个供 AI Agent 使用的自部署向量数据库管理系统。它负责知识库、文档、资源、切块、向量索引、混合检索、MCP 工具和本地 RAG 测试台，不实现生产级 Agent 编排、不保存对话状态、不管理 Prompt 模板，也不绑定特定 LLM。
 
 本项目不是多租户 SaaS，不提供租户管理、API Key 管理或用量统计。部署者应把系统放在自己的可信网络、反向代理或现有身份体系之后使用。
 
@@ -11,37 +11,41 @@ BYOB 的目标是让用户快速搭建一个供 AI Agent 使用的自部署向�
 核心能力：
 
 1. 知识库管理：创建、更新、删除多个知识库，每个知识库对应一个独立 Qdrant collection。
-2. 文档管理：上传文件、直接写入文本、从 URL 抓取内容，并异步解析和切块。
-3. 向量索引：使用 BGE-M3 生成 dense embedding，同时构建 sparse keyword vector。
+2. 文档管理：支持文件上传、批量上传、文本导入、URL 导入和 JPEG/PNG 图片导入，并异步解析、切块、抽取资源。
+3. 向量索引：使用 BGE-M3 生成 dense embedding，同时构建 deterministic sparse keyword vector；可选使用 CLIP 为图片资源建立视觉向量索引。
 4. 知识库治理：导入时强制标注用户自定义的来源类型、权威等级和审核状态，检索默认只使用 published 文档，并保留版本历史与审计日志。
-5. 检索 API 与 MCP：为 AI Agent 提供混合检索、高级检索、批量检索、独立 embedding、独立 rerank、chunk 获取、反馈能力，以及 stdio/Streamable HTTP MCP 工具入口。
-6. 管理控制台：用于本地管理员管理知识库、文档、用户账号、治理标签和检索测试。
-7. 自部署基础设施：PostgreSQL、Redis、Qdrant、MinIO、Infinity embedding/rerank、Celery worker。
+5. 检索 API 与 MCP：为 AI Agent 提供混合检索、高级检索、批量检索、独立 embedding、独立 rerank、chunk 获取、asset 获取、反馈能力，以及 stdio/Streamable HTTP MCP 工具入口。
+6. 管理控制台：用于本地管理员管理知识库、文档、用户账号、治理标签、检索测试、MCP 指引和 QA Agent 验证。
+7. 自部署基础设施：PostgreSQL、Redis、Qdrant、MinIO、Infinity embedding/rerank、Celery worker、MCP Server 和 Next.js 控制台。
 
 明确不做：
 
 - 不做租户、套餐、配额、计费或用量统计。
 - 不做 API Key 生命周期管理；检索 API 作为自部署本地 API 暴露。
 - 不做 Agent 编排、会话管理或 Prompt 管理。
-- 不做生成式回答，系统只负责检索和返回原文片段。
+- 不做生产级生成式问答平台；控制台 QA Agent 仅用于验证 MCP-backed RAG 的召回与回答效果。
 
 ---
 
 ## 技术栈
 
-| 层级 | 技术选型 | 用途 |
-| --- | --- | --- |
-| 后端框架 | FastAPI + Pydantic v2 | API 服务与 OpenAPI |
-| ORM / 迁移 | SQLAlchemy 2.0 async + Alembic | PostgreSQL 元数据 |
-| 关系数据库 | PostgreSQL 16 | 用户、知识库、文档、chunk、检索日志 |
-| 向量数据库 | Qdrant | Dense + sparse 检索 |
-| 对象存储 | MinIO | 上传文件原文 |
-| 缓存 / 队列 | Redis 7 | 检索缓存、Celery broker |
-| 异步任务 | Celery | 文档解析、切块、向量写入 |
-| 文档解析 | Markdown/HTML 结构化解析 + MinerU content_list 优先，pypdf/python-docx 兜底 | Markdown/HTML heading、table、image、code chunks，PDF、DOCX、PPT、PPTX、XLSX 版面、表格、图片、公式、OCR 友好解析 |
-| Embedding | BGE-M3 via Infinity | 文本向量化 |
-| Rerank | BGE-Reranker via Infinity | 检索结果精排 |
-| 前端 | Next.js + TypeScript + Tailwind | 管理控制台 |
+
+| 层级        | 技术选型                                                              | 用途                                                                                        |
+| --------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 后端框架      | FastAPI + Pydantic v2                                             | API 服务与 OpenAPI                                                                           |
+| ORM / 迁移  | SQLAlchemy 2.0 async + Alembic                                    | PostgreSQL 元数据                                                                            |
+| 关系数据库     | PostgreSQL 16                                                     | 用户、知识库、文档、chunk、检索日志                                                                      |
+| 向量数据库     | Qdrant                                                            | Dense + sparse 检索                                                                         |
+| 对象存储      | MinIO                                                             | 上传文件原文                                                                                    |
+| 缓存 / 队列   | Redis 7                                                           | 检索缓存、Celery broker                                                                        |
+| 异步任务      | Celery                                                            | 文档解析、切块、向量写入                                                                              |
+| 文档解析      | Markdown/HTML 结构化解析 + MinerU content_list 优先，pypdf/python-docx 兜底 | Markdown/HTML heading、table、image、code chunks，PDF、图片、DOCX、PPT、PPTX、XLSX 版面、表格、图片、公式、OCR 友好解析 |
+| Embedding | BGE-M3 via Infinity                                               | 文本向量化                                                                                     |
+| Rerank    | BGE-Reranker via Infinity                                         | 检索结果精排                                                                                    |
+| Visual embedding | CLIP via transformers/torch                                      | 图片资源索引与文本到图片召回                                                                           |
+| MCP       | Python MCP SDK                                                    | stdio / Streamable HTTP 工具服务                                                               |
+| 前端        | Next.js App Router + React + TypeScript + Tailwind                | 管理控制台、检索测试台、QA Agent 测试台                                                                 |
+
 
 ---
 
@@ -50,29 +54,30 @@ BYOB 的目标是让用户快速搭建一个供 AI Agent 使用的自部署向�
 ### 数据职责分离
 
 - PostgreSQL 是业务元数据和 chunk 原文的单一事实来源。
-- Qdrant 只保存向量和最小检索 payload，不保存原文 content。
-- MinIO 保存上传文件原始对象。
+- Qdrant 只保存文本向量、稀疏向量、视觉向量和最小检索 payload，不保存原文 content。
+- MinIO 保存上传文件原始对象、解析后的内容快照和抽取出的图片/文件资源。
 - Redis 只保存缓存、队列和临时数据。
 
 ### 单实例工作区
 
 - 系统按一个自部署实例运行，不存在租户隔离层。
 - 管理控制台使用 JWT 登录，仅用于本地用户管理和后台操作。
-- 检索 API 不要求项目内 API Key，便于 LangGraph、LlamaIndex、Dify、自研 Agent 等在同一可信环境中直接调用。
+- 用户管理接口要求 admin；知识库、文档和 QA Agent 接口要求控制台 JWT；检索 API 不要求项目内 API Key，便于 LangGraph、LlamaIndex、Dify、自研 Agent 等在同一可信环境中直接调用。
 - 生产部署时应通过反向代理、内网访问控制、VPN、网关或外部鉴权体系保护服务边界。
 
 ### Qdrant collection 策略
 
 - 每个知识库一个 collection，命名规则为 `kb_{uuid}`，UUID 中的连字符替换为下划线。
 - 不使用一个大 collection 承载多个知识库。
-- Qdrant payload 只包含检索过滤所需信息：`chunk_id`、`doc_id`、`chunk_type`、`tags`、`created_at`、`review_status`、`authority_level`、`governance_source_type`、`document_version`。
+- Qdrant payload 只包含检索过滤所需信息：`chunk_id`、`doc_id`、`chunk_type`、`tags`、`created_at`、`review_status`、`authority_level`、`governance_source_type`、`document_version`；视觉集合还会包含 `asset_id` 等 asset 定位字段。
 
 ### 异步处理
 
 - API 层只创建文档记录和入队任务。
 - Celery worker 负责解析、切块、embedding、写入 chunks 表和 Qdrant。
 - Markdown/HTML 会解析为 heading、paragraph、table、image、code 等 typed chunks，并提取内嵌 `data:image/...;base64,...` 图片为文档 asset；相对路径或远程图片会保留为 image chunk 引用，不主动抓取外部文件。
-- PDF、DOCX、PPT、PPTX、XLSX 优先使用 MinerU `content_list.json` 结构化输出，并转换为 typed chunks：text 可按 chunk size/overlap 合并，table/image/equation 保持独立，写入 `chunk_type`、`page_num`、`bbox`、`title_path`、`table_caption`、`image_caption`、`image_path`、`latex` 等元数据；PDF 在 MinerU 不可用时可配置回退到 pypdf，DOCX 可回退到 python-docx。
+- PDF、图片、DOCX、PPT、PPTX、XLSX 优先使用 MinerU `content_list.json` 结构化输出，并转换为 typed chunks：text 可按 chunk size/overlap 合并，table/image/equation 保持独立，写入 `chunk_type`、`page_num`、`bbox`、`title_path`、`table_caption`、`image_caption`、`image_path`、`latex` 等元数据；PDF 在 MinerU 不可用时可配置回退到 pypdf，DOCX 可回退到 python-docx。
+- 多模态 RAG 开启时，独立图片与解析出的图片 asset 会写入 `<collection>_visual`，检索阶段用 CLIP 文本向量召回相关图片并与文本 dense/sparse 结果融合。
 - 文档处理失败要写入 `documents.error_message`，便于控制台展示。
 
 ---
@@ -104,11 +109,19 @@ GET    /api/v1/knowledge-bases/{kb_id}/stats
 
 ```text
 POST   /api/v1/knowledge-bases/{kb_id}/documents
+POST   /api/v1/knowledge-bases/{kb_id}/documents/batch
 POST   /api/v1/knowledge-bases/{kb_id}/documents/text
 POST   /api/v1/knowledge-bases/{kb_id}/documents/url
 GET    /api/v1/knowledge-bases/{kb_id}/documents
 GET    /api/v1/documents/{document_id}
 GET    /api/v1/documents/{document_id}/chunks
+GET    /api/v1/documents/{document_id}/content
+PATCH  /api/v1/documents/{document_id}/content
+PATCH  /api/v1/documents/{document_id}/governance
+GET    /api/v1/documents/{document_id}/versions
+GET    /api/v1/documents/{document_id}/audit-logs
+GET    /api/v1/documents/{document_id}/assets
+GET    /api/v1/documents/{document_id}/assets/{asset_id}
 DELETE /api/v1/documents/{document_id}
 POST   /api/v1/documents/{document_id}/reprocess
 ```
@@ -124,6 +137,12 @@ POST   /api/v1/retrieval/embed
 POST   /api/v1/retrieval/{request_id}/feedback
 ```
 
+QA Agent：
+
+```text
+POST   /api/v1/agent/ask
+```
+
 MCP 工具：
 
 ```text
@@ -133,6 +152,8 @@ search_knowledge_base
 advanced_search_knowledge_base
 multi_search_knowledge_base
 get_document_chunks
+list_document_assets
+get_document_asset
 ```
 
 运维：
@@ -224,13 +245,18 @@ usage_daily
       "document": {
         "id": "uuid",
         "name": "manual.pdf",
-        "metadata": {}
+        "metadata": {},
+        "governance_source_type": "official",
+        "authority_level": 1,
+        "review_status": "published",
+        "version": 1
       },
       "kb_id": "uuid",
       "chunk_type": "text",
       "page_num": 12,
       "bbox": null,
       "metadata": {},
+      "assets": [],
       "parent_chunk": null
     }
   ],
@@ -255,6 +281,19 @@ usage_daily
 
 ## 本地开发
 
+推荐使用跨平台一键启动脚本同时拉起 API、Worker、MCP Streamable HTTP 和前端控制台：
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d
+uv sync --extra dev
+uv run alembic upgrade head
+uv run python -m api.scripts.seed_admin
+uv run python start-dev.py --install-frontend
+```
+
+也可以按服务拆分启动：
+
 ```powershell
 Copy-Item .env.example .env
 docker compose up -d
@@ -268,6 +307,12 @@ uv run uvicorn api.app.main:app --reload
 
 ```powershell
 uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO
+```
+
+MCP Streamable HTTP：
+
+```powershell
+uv run python -m api.app.mcp_server --transport streamable-http --host 127.0.0.1 --port 8010
 ```
 
 前端控制台：
@@ -296,4 +341,5 @@ npx tsc --noEmit
 - 不重新引入租户、API Key 管理、套餐、计费或用量统计。
 - Qdrant payload 不允许保存 chunk 原文。
 - 控制台用于管理本地实例，不做 SaaS 管理后台。
+- 控制台 QA Agent 用于验证 RAG，不演进为复杂 Agent 编排平台。
 - API 行为不依赖请求体中的组织、租户或账号归属字段。
