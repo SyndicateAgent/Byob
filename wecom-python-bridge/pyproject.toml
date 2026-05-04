@@ -1,0 +1,20 @@
+[project]
+name = "byob-wecom-python-bridge"
+version = "0.1.0"
+description = "Python Enterprise WeChat long-connection bridge for BYOB QA Agent."
+readme = "README.zh-CN.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27.2",
+    "wecom-aibot-sdk==1.0.6",
+]
+
+[project.scripts]
+byob-wecom-bridge = "byob_wecom_bridge.main:run"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pyright]
+pythonVersion = "3.12"
