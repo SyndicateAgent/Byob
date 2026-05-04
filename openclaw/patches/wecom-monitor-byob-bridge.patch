@@ -1,0 +1,164 @@
+diff --git a/dist/src/monitor.js b/dist/src/monitor.js
+--- a/dist/src/monitor.js
++++ b/dist/src/monitor.js
+@@ -32,6 +32,150 @@ import { setWeComWebSocket, setMessageState, deleteMessageState, setReqIdForChat
+ import { updateTemplateCardOnEvent, processTemplateCardsIfNeeded, } from "./template-card-manager.js";
+ import { maskTemplateCardBlocks } from "./template-card-parser.js";
+ import { PLUGIN_VERSION } from "./version.js";
++const byobBridgeTokenCache = {
++    token: null,
++    expiresAt: 0,
++};
++function isByobBridgeEnabled() {
++    const value = process.env.BYOB_BRIDGE_ENABLED ?? "";
++    return /^(1|true|yes|on)$/i.test(value.trim());
++}
++function getByobApiBaseUrl() {
++    return (process.env.BYOB_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
++}
++function getByobBridgeTimeoutMs() {
++    const parsed = Number(process.env.BYOB_BRIDGE_TIMEOUT_MS ?? "120000");
++    return Number.isFinite(parsed) && parsed > 0 ? parsed : 120000;
++}
++function getByobBridgeTopK() {
++    const parsed = Number(process.env.BYOB_AGENT_TOP_K ?? "5");
++    if (!Number.isFinite(parsed))
++        return 5;
++    return Math.min(Math.max(Math.trunc(parsed), 1), 20);
++}
++function shouldByobUseLlm() {
++    return /^(1|true|yes|on)$/i.test((process.env.BYOB_AGENT_USE_LLM ?? "false").trim());
++}
++async function fetchWithTimeout(url, init, timeoutMs) {
++    const controller = new AbortController();
++    const timer = setTimeout(() => controller.abort(), timeoutMs);
++    try {
++        return await fetch(url, { ...init, signal: controller.signal });
++    }
++    finally {
++        clearTimeout(timer);
++    }
++}
++async function getByobBearerToken(runtime) {
++    const staticToken = process.env.BYOB_API_TOKEN?.trim();
++    if (staticToken)
++        return staticToken;
++    const now = Date.now();
++    if (byobBridgeTokenCache.token && byobBridgeTokenCache.expiresAt > now + 30000) {
++        return byobBridgeTokenCache.token;
++    }
++    const email = process.env.BYOB_API_EMAIL?.trim();
++    const password = process.env.BYOB_API_PASSWORD;
++    if (!email || !password) {
++        throw new Error("BYOB bridge requires BYOB_API_TOKEN or BYOB_API_EMAIL/BYOB_API_PASSWORD");
++    }
++    const response = await fetchWithTimeout(`${getByobApiBaseUrl()}/api/v1/auth/login`, {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify({ email, password }),
++    }, getByobBridgeTimeoutMs());
++    if (!response.ok) {
++        throw new Error(`BYOB login failed: HTTP ${response.status}`);
++    }
++    const payload = await response.json();
++    if (!payload?.access_token) {
++        throw new Error("BYOB login did not return access_token");
++    }
++    const expiresIn = Number(payload.expires_in ?? 3600);
++    byobBridgeTokenCache.token = String(payload.access_token);
++    byobBridgeTokenCache.expiresAt = Date.now() + Math.max(expiresIn - 60, 60) * 1000;
++    runtime.log?.("[byob-bridge] refreshed BYOB bearer token");
++    return byobBridgeTokenCache.token;
++}
++async function askByobAgent(question, runtime) {
++    const token = await getByobBearerToken(runtime);
++    const body = {
++        question: question.slice(0, 4000),
++        top_k: getByobBridgeTopK(),
++        use_llm: shouldByobUseLlm(),
++    };
++    const response = await fetchWithTimeout(`${getByobApiBaseUrl()}/api/v1/agent/ask`, {
++        method: "POST",
++        headers: {
++            "Content-Type": "application/json",
++            Authorization: `Bearer ${token}`,
++        },
++        body: JSON.stringify(body),
++    }, getByobBridgeTimeoutMs());
++    if (!response.ok) {
++        const detail = await response.text().catch(() => "");
++        throw new Error(`BYOB agent ask failed: HTTP ${response.status}${detail ? ` ${detail.slice(0, 300)}` : ""}`);
++    }
++    const payload = await response.json();
++    if (typeof payload?.answer !== "string" || !payload.answer.trim()) {
++        throw new Error("BYOB agent returned an empty answer");
++    }
++    return payload.answer.trim();
++}
++async function sendByobBridgeText(params) {
++    const { wsClient, frame, chatId, text, runtime } = params;
++    try {
++        await sendWeComReply({ wsClient, frame, text, runtime, finish: true });
++    }
++    catch (err) {
++        if (!(err instanceof StreamExpiredError)) {
++            runtime.error?.(`[byob-bridge] passive reply failed, falling back to proactive send: ${String(err)}`);
++        }
++        await wsClient.sendMessage(chatId, {
++            msgtype: "markdown",
++            markdown: { content: text },
++        });
++    }
++}
++async function tryByobBridgeReply(entry, cleanupState) {
++    if (!isByobBridgeEnabled())
++        return false;
++    const { frame, runtime, wsClient, text, mediaList, chatId } = entry;
++    try {
++        if (!text?.trim()) {
++            await sendByobBridgeText({
++                wsClient,
++                frame,
++                chatId,
++                text: "当前 BYOB 旁路只处理文本消息。",
++                runtime,
++            });
++            return true;
++        }
++        if (mediaList.length > 0) {
++            runtime.log?.(`[byob-bridge] media ignored for bridge request, count=${mediaList.length}`);
++        }
++        runtime.log?.(`[byob-bridge] forwarding WeCom message to BYOB agent, chars=${text.length}`);
++        const answer = await askByobAgent(text, runtime);
++        await sendByobBridgeText({ wsClient, frame, chatId, text: answer, runtime });
++        runtime.log?.("[byob-bridge] BYOB answer delivered to WeCom");
++        return true;
++    }
++    catch (err) {
++        runtime.error?.(`[byob-bridge] failed: ${String(err)}`);
++        await sendByobBridgeText({
++            wsClient,
++            frame,
++            chatId,
++            text: "BYOB 旁路调用失败，请查看本机 OpenClaw 日志。",
++            runtime,
++        }).catch((replyErr) => runtime.error?.(`[byob-bridge] failed to send error reply: ${String(replyErr)}`));
++        return true;
++    }
++    finally {
++        cleanupState();
++    }
++}
+ // ============================================================================
+ // 附件超限提示文案
+ // ============================================================================
+@@ -613,6 +757,9 @@ async function processWeComMessageNow(entry) {
+     const cleanupState = () => {
+         deleteMessageState(messageId);
+     };
++    if (await tryByobBridgeReply(entry, cleanupState)) {
++        return;
++    }
+     // // Step 6: 发送"思考中"消息
+     // const shouldSendThinking = account.sendThinkingMessage ?? true;
+     // if (shouldSendThinking) {
