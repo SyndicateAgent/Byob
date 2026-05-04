@@ -46,6 +46,11 @@ Import-LocalEnv -Path $EnvFile
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 $env:OPENCLAW_STATE_DIR = $StateDir
 
+$ConfigFile = Join-Path $StateDir "openclaw.json"
+if (-not (Test-Path -LiteralPath $ConfigFile)) {
+    throw "OpenClaw config was not found at $ConfigFile. Run .\scripts\write-openclaw-config.ps1 first."
+}
+
 Set-DefaultEnv "BYOB_BRIDGE_ENABLED" "1"
 Set-DefaultEnv "BYOB_API_BASE_URL" "http://127.0.0.1:8000"
 Set-DefaultEnv "BYOB_AGENT_USE_LLM" "true"

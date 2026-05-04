@@ -1,5 +1,7 @@
 # BYOB OpenClaw Sidecar
 
+Chinese version: [README.zh-CN.md](./README.zh-CN.md).
+
 This directory contains the lightweight OpenClaw sidecar setup used to connect
 Enterprise WeChat messages to the BYOB QA Agent.
 
@@ -52,8 +54,40 @@ Start BYOB first:
 - Worker: ingestion worker if you need to add documents
 - Optional LLM: configure BYOB `AGENT_LLM_*` variables if `BYOB_AGENT_USE_LLM=true`
 
-OpenClaw requires a recent Node.js runtime. The current sidecar was tested with
-OpenClaw `^2026.5.3` and WeCom plugin `2026.4.29`.
+OpenClaw requires a recent Node.js runtime. The current sidecar pins OpenClaw
+`2026.5.3` and WeCom plugin `2026.4.29`.
+
+## Human Step: Create The WeCom Long-Connection Bot
+
+This step must be completed by a human Enterprise WeChat administrator. It
+creates credentials in the Enterprise WeChat admin console, and the generated
+`Secret` should be copied into `env.local` only.
+
+Reference: Enterprise WeChat's intelligent robot long-connection documentation:
+`https://open.work.weixin.qq.com/help2/pc/cat?doc_id=21657`.
+
+Human operator steps:
+
+1. Log in to the Enterprise WeChat admin console.
+2. Open `Security and Management` -> `Management Tools` -> `Intelligent Robot`.
+3. Click `Create Robot`, then choose `Manual Creation`.
+4. Fill in the robot name, description, avatar, and visible scope.
+5. Scroll to the bottom and choose `API Mode Creation`.
+6. In connection mode, choose `Use Long Connection`.
+7. In the Secret/configuration area, click to generate or view the credentials.
+8. Copy and store the generated `Bot ID` and `Secret`.
+9. Save the robot.
+
+For this sidecar, put those values in `env.local`:
+
+```text
+WECOM_BOT_ID=<Bot ID from Enterprise WeChat>
+WECOM_SECRET=<Secret from Enterprise WeChat>
+```
+
+Long connection means OpenClaw connects outbound to Enterprise WeChat's
+WebSocket gateway. The BYOB/OpenClaw sidecar does not need a public HTTP
+callback URL or webhook for receiving user messages in this mode.
 
 ## Setup
 
@@ -80,13 +114,11 @@ WECOM_SECRET=<enterprise wechat secret>
 You can use `BYOB_API_TOKEN` instead of `BYOB_API_EMAIL` and
 `BYOB_API_PASSWORD`.
 
-Create `state/openclaw.json` from `config/openclaw.json.example`.
+Generate `state/openclaw.json`:
 
-Replace:
-
-- `REPLACE_WITH_ABSOLUTE_PATH_TO_BYOB`
-- `REPLACE_WITH_WECOM_BOT_ID`
-- `REPLACE_WITH_WECOM_SECRET`
+```powershell
+.\scripts\write-openclaw-config.ps1
+```
 
 The plugin path should resolve to:
 
@@ -105,7 +137,7 @@ state\npm\node_modules\@wecom\wecom-openclaw-plugin\dist\src\monitor.js
 Apply the patch from the BYOB repo root:
 
 ```powershell
-git apply --directory .\openclaw\state\npm\node_modules\@wecom\wecom-openclaw-plugin .\openclaw\patches\wecom-monitor-byob-bridge.patch
+.\openclaw\scripts\apply-wecom-bridge-patch.ps1
 ```
 
 Validate the patched JavaScript:
@@ -115,7 +147,9 @@ node --check .\openclaw\state\npm\node_modules\@wecom\wecom-openclaw-plugin\dist
 ```
 
 If the file has already been patched, `git apply` will fail. Reinstall the
-plugin or restore the original `monitor.js`, then apply the patch again.
+plugin or restore the original `monitor.js`, then apply the patch again. The
+script is idempotent and exits successfully when it detects the bridge patch is
+already present.
 
 ## Run
 
