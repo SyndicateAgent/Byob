@@ -1,0 +1,12 @@
+{
+  "name": "byob-openclaw-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenClaw sidecar wiring for BYOB QA Agent and Enterprise WeChat.",
+  "scripts": {
+    "gateway": "openclaw gateway run --allow-unconfigured --port 18789 --bind loopback --auth none"
+  },
+  "dependencies": {
+    "openclaw": "^2026.5.3"
+  }
+}
