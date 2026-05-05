@@ -105,6 +105,24 @@ def metadata_with_ingestion_progress(
     return base_metadata
 
 
+def metadata_with_document_description(
+    metadata: dict[str, object] | None,
+    description: str | None,
+) -> dict[str, object]:
+    """Return document metadata with an optional retrieval description."""
+
+    base_metadata = dict(metadata or {})
+    if description is None:
+        return base_metadata
+
+    normalized = description.strip()
+    if normalized:
+        base_metadata["description"] = normalized
+    else:
+        base_metadata.pop("description", None)
+    return base_metadata
+
+
 def hash_content(content: bytes) -> str:
     """Return the SHA256 hash for uploaded document content."""
 
@@ -218,7 +236,10 @@ async def create_text_document(
         authority_level=payload.authority_level,
         review_status=payload.review_status,
         metadata_=metadata_with_ingestion_progress(
-            {**payload.metadata, "inline_content": payload.content},
+            {
+                **metadata_with_document_description(payload.metadata, payload.description),
+                "inline_content": payload.content,
+            },
             stage="queued",
             progress=10,
             status="pending",
@@ -270,7 +291,7 @@ async def create_url_document(
         authority_level=payload.authority_level,
         review_status=payload.review_status,
         metadata_=metadata_with_ingestion_progress(
-            payload.metadata,
+            metadata_with_document_description(payload.metadata, payload.description),
             stage="queued",
             progress=10,
             status="pending",
@@ -330,9 +351,7 @@ async def list_chunks(session: AsyncSession, document: Document) -> list[Chunk]:
     """Return persisted chunks for one document."""
 
     result = await session.execute(
-        select(Chunk)
-        .where(Chunk.document_id == document.id)
-        .order_by(Chunk.chunk_index.asc())
+        select(Chunk).where(Chunk.document_id == document.id).order_by(Chunk.chunk_index.asc())
     )
     return list(result.scalars().all())
 

@@ -49,6 +49,14 @@ import type {
 } from "@/lib/types";
 
 type UploadMode = "text" | "files" | "url" | null;
+type ImportFilePolicy = {
+  key: string;
+  filename: string;
+  governance_source_type: string;
+  authority_level: string;
+  review_status: string;
+  description: string;
+};
 type DocumentFilter = "all" | "published" | "reviewed" | "draft" | "deprecated" | "active" | "failed";
 type DocumentWorkspaceView = "overview" | "import" | "library" | "activity";
 type GovernanceWorkspaceView = "overview" | "policy" | "content" | "monitor";
@@ -216,9 +224,27 @@ function matchesDocumentFilter(document: DocumentItem, filter: DocumentFilter) {
   return document.review_status === filter;
 }
 
+function documentDescription(document: DocumentItem) {
+  const value = document.metadata?.description;
+  return typeof value === "string" ? value : "";
+}
+
+function importFileKey(file: File, index: number) {
+  return `${file.name}:${file.size}:${file.lastModified}:${index}`;
+}
+
+function importFilePolicyReady(policy: ImportFilePolicy) {
+  return Boolean(
+    policy.governance_source_type.trim() &&
+      isValidAuthorityLevel(policy.authority_level) &&
+      policy.review_status,
+  );
+}
+
 function searchableDocumentText(document: DocumentItem) {
   return [
     document.name,
+    documentDescription(document),
     document.source_type,
     document.file_type ?? "",
     document.status,
@@ -294,14 +320,19 @@ export default function DocumentsPage() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [kbId, setKbId] = useState("");
   const [activeView, setActiveView] = useState<DocumentWorkspaceView>("overview");
+  const [selectedImportType, setSelectedImportType] = useState<UploadMode>(null);
   const [documentSearch, setDocumentSearch] = useState("");
   const [documentFilter, setDocumentFilter] = useState<DocumentFilter>("all");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
+  const [textDescription, setTextDescription] = useState("");
+  const [fileDescription, setFileDescription] = useState("");
   const [webPageTitle, setWebPageTitle] = useState("");
   const [webPageUrl, setWebPageUrl] = useState("");
+  const [webPageDescription, setWebPageDescription] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [filePolicies, setFilePolicies] = useState<ImportFilePolicy[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [governanceSourceType, setGovernanceSourceType] = useState("");
   const [authorityLevel, setAuthorityLevel] = useState("");
@@ -339,6 +370,15 @@ export default function DocumentsPage() {
   const [governanceError, setGovernanceError] = useState<string | null>(null);
 
   const governanceReady = Boolean(governanceSourceType.trim() && isValidAuthorityLevel(authorityLevel) && reviewStatus);
+  const filePoliciesReady = Boolean(
+    files.length > 0 &&
+      filePolicies.length === files.length &&
+      filePolicies.every(importFilePolicyReady),
+  );
+  const importReady =
+    selectedImportType === "files"
+      ? filePoliciesReady
+      : Boolean(selectedImportType && governanceReady);
 
   async function loadKnowledgeBases() {
     const response = await apiRequest<{ data: KnowledgeBase[] }>("/api/v1/knowledge-bases");
@@ -463,6 +503,55 @@ export default function DocumentsPage() {
     return () => window.clearInterval(timer);
   }, [activeDocuments, kbId]);
 
+  function handleFileSelection(selectedFiles: File[]) {
+    setFiles(selectedFiles);
+    setFilePolicies((current) => {
+      const existingByKey = new Map(current.map((policy) => [policy.key, policy]));
+      return selectedFiles.map((file, index) => {
+        const key = importFileKey(file, index);
+        return (
+          existingByKey.get(key) ?? {
+            key,
+            filename: file.name,
+            governance_source_type: governanceSourceType.trim(),
+            authority_level: authorityLevel,
+            review_status: reviewStatus,
+            description: fileDescription.trim(),
+          }
+        );
+      });
+    });
+  }
+
+  function updateFilePolicy(index: number, updates: Partial<ImportFilePolicy>) {
+    setFilePolicies((current) =>
+      current.map((policy, policyIndex) =>
+        policyIndex === index ? { ...policy, ...updates } : policy,
+      ),
+    );
+  }
+
+  function removeSelectedFile(index: number) {
+    setFiles((current) => {
+      const next = current.filter((_, fileIndex) => fileIndex !== index);
+      if (next.length === 0) setFileInputKey((key) => key + 1);
+      return next;
+    });
+    setFilePolicies((current) => current.filter((_, policyIndex) => policyIndex !== index));
+  }
+
+  function applyFileDefaults() {
+    setFilePolicies((current) =>
+      current.map((policy) => ({
+        ...policy,
+        governance_source_type: governanceSourceType.trim(),
+        authority_level: authorityLevel,
+        review_status: reviewStatus,
+        description: fileDescription.trim(),
+      })),
+    );
+  }
+
   async function uploadText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -474,6 +563,7 @@ export default function DocumentsPage() {
         body: JSON.stringify({
           name,
           content,
+          description: textDescription.trim() || null,
           file_type: "txt",
           governance_source_type: governanceSourceType.trim(),
           authority_level: Number(authorityLevel),
@@ -484,6 +574,7 @@ export default function DocumentsPage() {
       setUploadProgress(100);
       setName("");
       setContent("");
+      setTextDescription("");
       await loadDocuments();
       setActiveView("activity");
     } catch (err) {
@@ -498,7 +589,7 @@ export default function DocumentsPage() {
 
   async function uploadFiles(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (files.length === 0) return;
+    if (!filePoliciesReady) return;
     setError(null);
     setImportSummary(null);
     setUploading("files");
@@ -507,9 +598,17 @@ export default function DocumentsPage() {
       for (const selectedFile of files) {
         formData.append("files", selectedFile);
       }
-      formData.append("governance_source_type", governanceSourceType.trim());
-      formData.append("authority_level", authorityLevel);
-      formData.append("review_status", reviewStatus);
+      formData.append(
+        "items",
+        JSON.stringify(
+          filePolicies.map((policy) => ({
+            governance_source_type: policy.governance_source_type.trim(),
+            authority_level: Number(policy.authority_level),
+            review_status: policy.review_status,
+            description: policy.description.trim() || null,
+          })),
+        ),
+      );
       const response = await apiRequest<DocumentBatchUploadResponse>(`/api/v1/knowledge-bases/${kbId}/documents/batch`, {
         method: "POST",
         body: formData,
@@ -529,6 +628,8 @@ export default function DocumentsPage() {
       );
       setUploadProgress(100);
       setFiles([]);
+      setFilePolicies([]);
+      setFileDescription("");
       setFileInputKey((current) => current + 1);
       await loadDocuments();
       setActiveView("activity");
@@ -553,6 +654,7 @@ export default function DocumentsPage() {
         body: JSON.stringify({
           name: webPageTitle.trim() || null,
           url: webPageUrl.trim(),
+          description: webPageDescription.trim() || null,
           governance_source_type: governanceSourceType.trim(),
           authority_level: Number(authorityLevel),
           review_status: reviewStatus,
@@ -563,6 +665,7 @@ export default function DocumentsPage() {
       setUploadProgress(100);
       setWebPageTitle("");
       setWebPageUrl("");
+      setWebPageDescription("");
       await loadDocuments();
       setActiveView("activity");
     } catch (err) {
@@ -878,107 +981,168 @@ export default function DocumentsPage() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle>Ingestion workbench</CardTitle>
-              <CardDescription>Set source governance once, then import text, files, or web pages into the selected knowledge base.</CardDescription>
+              <CardDescription>Select an import type, then configure retrieval policy and description.</CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={() => setActiveView("overview")} className="gap-2">
                 <ArrowLeft className="h-4 w-4" /> Overview
               </Button>
-              <Badge variant={governanceReady ? "success" : "warning"}>
-                {governanceReady ? "policy ready" : "policy required"}
+              <Badge variant={importReady ? "success" : "warning"}>
+                {!selectedImportType ? "type required" : importReady ? "ready" : "policy required"}
               </Badge>
             </div>
           </div>
         </div>
         <div className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className="grid divide-y divide-slate-100 xl:grid-cols-3 xl:divide-x xl:divide-y-0">
-            <form className="space-y-4 p-6" onSubmit={uploadText}>
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 text-blue-700">
-                  <Type className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="font-semibold text-slate-950">Direct text</p>
-                  <p className="text-sm text-slate-500">Create a managed text document.</p>
-                </div>
-              </div>
-              <Input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Document name"
-                required
+          <div className="space-y-5 p-6">
+            <div className="grid gap-3 md:grid-cols-3">
+              <ImportTypeOption
+                active={selectedImportType === "text"}
+                icon={<Type className="h-4 w-4" />}
+                title="Direct text"
+                detail="Create a managed text document."
+                onClick={() => setSelectedImportType("text")}
               />
-              <Textarea
-                value={content}
-                onChange={(event) => setContent(event.target.value)}
-                placeholder="Content"
-                required
-                className="min-h-40"
+              <ImportTypeOption
+                active={selectedImportType === "files"}
+                icon={<FileUp className="h-4 w-4" />}
+                title="Batch files"
+                detail="Configure policy per selected file."
+                onClick={() => setSelectedImportType("files")}
               />
-              <Button type="submit" disabled={!kbId || uploading !== null || !governanceReady} className="gap-2">
-                <Upload className="h-4 w-4" /> {uploading === "text" ? "Queueing" : "Upload text"}
-              </Button>
-            </form>
+              <ImportTypeOption
+                active={selectedImportType === "url"}
+                icon={<Globe2 className="h-4 w-4" />}
+                title="Web page"
+                detail="Fetch an article or page by URL."
+                onClick={() => setSelectedImportType("url")}
+              />
+            </div>
 
-            <form className="space-y-4 p-6" onSubmit={uploadFiles}>
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-100 bg-emerald-50 text-emerald-700">
-                  <FileUp className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="font-semibold text-slate-950">Batch files</p>
-                  <p className="text-sm text-slate-500">Import PDF, DOCX, PPT, PPTX, XLSX, Markdown, TXT, HTML, JPEG, or PNG.</p>
-                </div>
+            {!selectedImportType && (
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+                Select an import type to continue.
               </div>
-              <Input
-                key={fileInputKey}
-                type="file"
-                multiple
-                accept=".pdf,.docx,.ppt,.pptx,.xlsx,.md,.markdown,.txt,.html,.jpg,.jpeg,.png"
-                onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-                required
-              />
-              {files.length > 0 && (
-                <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-                  {files.slice(0, 4).map((file) => (
-                    <Badge key={`${file.name}-${file.size}`} variant="muted" className="max-w-48 truncate">
-                      {file.name}
-                    </Badge>
-                  ))}
-                  {files.length > 4 && <Badge variant="muted">+{formatNumber(files.length - 4)} more</Badge>}
-                </div>
-              )}
-              <Button type="submit" disabled={!kbId || files.length === 0 || uploading !== null || !governanceReady} className="gap-2">
-                <Upload className="h-4 w-4" /> {uploading === "files" ? "Queueing" : "Import files"}
-              </Button>
-            </form>
+            )}
 
-            <form className="space-y-4 p-6" onSubmit={uploadWebPage}>
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-violet-100 bg-violet-50 text-violet-700">
-                  <Globe2 className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="font-semibold text-slate-950">Web page</p>
-                  <p className="text-sm text-slate-500">Fetch an article or page by URL.</p>
-                </div>
-              </div>
-              <Input
-                type="url"
-                value={webPageUrl}
-                onChange={(event) => setWebPageUrl(event.target.value)}
-                placeholder="https://example.com/article"
-                required
-              />
-              <Input
-                value={webPageTitle}
-                onChange={(event) => setWebPageTitle(event.target.value)}
-                placeholder="Optional title"
-              />
-              <Button type="submit" disabled={!kbId || uploading !== null || !governanceReady || !webPageUrl.trim()} className="gap-2">
-                <Upload className="h-4 w-4" /> {uploading === "url" ? "Queueing" : "Import page"}
-              </Button>
-            </form>
+            {selectedImportType === "text" && (
+              <form className="space-y-4" onSubmit={uploadText}>
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Document name"
+                  required
+                />
+                <Textarea
+                  value={content}
+                  onChange={(event) => setContent(event.target.value)}
+                  placeholder="Content"
+                  required
+                  className="min-h-40"
+                />
+                <Textarea
+                  value={textDescription}
+                  onChange={(event) => setTextDescription(event.target.value)}
+                  placeholder="Optional description for retrieval context"
+                  maxLength={2000}
+                  className="min-h-24"
+                />
+                <Button type="submit" disabled={!kbId || uploading !== null || !governanceReady} className="gap-2">
+                  <Upload className="h-4 w-4" /> {uploading === "text" ? "Queueing" : "Upload text"}
+                </Button>
+              </form>
+            )}
+
+            {selectedImportType === "files" && (
+              <form className="space-y-4" onSubmit={uploadFiles}>
+                <Input
+                  key={fileInputKey}
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.ppt,.pptx,.xlsx,.md,.markdown,.txt,.html,.jpg,.jpeg,.png"
+                  onChange={(event) => handleFileSelection(Array.from(event.target.files ?? []))}
+                  required
+                />
+                {filePolicies.length > 0 && (
+                  <div className="space-y-3">
+                    {filePolicies.map((policy, index) => (
+                      <div key={policy.key} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-950">{policy.filename}</p>
+                            <p className="text-xs text-slate-500">
+                              File {formatNumber(index + 1)} · {formatNumber(files[index]?.size ?? 0)} bytes
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={importFilePolicyReady(policy) ? "success" : "warning"}>
+                              {importFilePolicyReady(policy) ? "ready" : "policy required"}
+                            </Badge>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => removeSelectedFile(index)}
+                              title="Remove file"
+                              aria-label={`Remove ${policy.filename}`}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                        <GovernanceFields
+                          sourceType={policy.governance_source_type}
+                          authorityLevel={policy.authority_level}
+                          reviewStatus={policy.review_status}
+                          onSourceTypeChange={(value) => updateFilePolicy(index, { governance_source_type: value })}
+                          onAuthorityLevelChange={(value) => updateFilePolicy(index, { authority_level: value })}
+                          onReviewStatusChange={(value) => updateFilePolicy(index, { review_status: value })}
+                          sourceOptions={sourceOptions}
+                          compact
+                        />
+                        <Textarea
+                          value={policy.description}
+                          onChange={(event) => updateFilePolicy(index, { description: event.target.value })}
+                          placeholder="Optional description for retrieval context"
+                          maxLength={2000}
+                          className="min-h-20 bg-white"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <Button type="submit" disabled={!kbId || uploading !== null || !filePoliciesReady} className="gap-2">
+                  <Upload className="h-4 w-4" /> {uploading === "files" ? "Queueing" : "Import files"}
+                </Button>
+              </form>
+            )}
+
+            {selectedImportType === "url" && (
+              <form className="space-y-4" onSubmit={uploadWebPage}>
+                <Input
+                  type="url"
+                  value={webPageUrl}
+                  onChange={(event) => setWebPageUrl(event.target.value)}
+                  placeholder="https://example.com/article"
+                  required
+                />
+                <Input
+                  value={webPageTitle}
+                  onChange={(event) => setWebPageTitle(event.target.value)}
+                  placeholder="Optional title"
+                />
+                <Textarea
+                  value={webPageDescription}
+                  onChange={(event) => setWebPageDescription(event.target.value)}
+                  placeholder="Optional description for retrieval context"
+                  maxLength={2000}
+                  className="min-h-24"
+                />
+                <Button type="submit" disabled={!kbId || uploading !== null || !governanceReady || !webPageUrl.trim()} className="gap-2">
+                  <Upload className="h-4 w-4" /> {uploading === "url" ? "Queueing" : "Import page"}
+                </Button>
+              </form>
+            )}
           </div>
 
           <aside className="border-t border-slate-200 bg-slate-50/70 p-6 lg:border-l lg:border-t-0">
@@ -989,8 +1153,8 @@ export default function DocumentsPage() {
                     <ShieldCheck className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="font-semibold text-slate-950">Import policy</p>
-                    <p className="text-sm text-slate-500">Applied to every new source.</p>
+                    <p className="font-semibold text-slate-950">Default policy</p>
+                    <p className="text-sm text-slate-500">Used directly for text and web pages, and as the file template.</p>
                   </div>
                 </div>
                 <GovernanceFields
@@ -1003,6 +1167,24 @@ export default function DocumentsPage() {
                   sourceOptions={sourceOptions}
                   compact
                 />
+                <Textarea
+                  value={fileDescription}
+                  onChange={(event) => setFileDescription(event.target.value)}
+                  placeholder="Default file description"
+                  maxLength={2000}
+                  className="min-h-20 bg-white"
+                />
+                {selectedImportType === "files" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={applyFileDefaults}
+                    disabled={files.length === 0 || !governanceReady}
+                    className="w-full"
+                  >
+                    Apply defaults to selected files
+                  </Button>
+                )}
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -1180,6 +1362,7 @@ export default function DocumentsPage() {
               const progress = documentProgress(document, progressByRun[documentProgressKey(document)]);
               const failed = document.status.toLowerCase() === "failed";
               const completed = document.status.toLowerCase() === "completed";
+              const description = documentDescription(document);
 
               return (
                 <TR key={document.id} className="animate-fade-up">
@@ -1194,6 +1377,9 @@ export default function DocumentsPage() {
                       )}
                       <div className="min-w-0">
                         <p className="truncate font-medium">{document.name}</p>
+                        {description && (
+                          <p className="max-w-md truncate text-xs text-slate-500">{description}</p>
+                        )}
                         {document.error_message && (
                           <p className="max-w-md truncate text-xs text-red-600">{document.error_message}</p>
                         )}
@@ -1820,6 +2006,38 @@ function QueueSummaryRow({
       </div>
       <span className="font-medium tabular-nums text-slate-950">{value}</span>
     </div>
+  );
+}
+
+function ImportTypeOption({
+  active,
+  icon,
+  title,
+  detail,
+  onClick,
+}: {
+  active: boolean;
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-lg border p-4 text-left transition ${
+        active
+          ? "border-blue-300 bg-blue-50 text-blue-950 shadow-sm"
+          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+      }`}
+    >
+      <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg border border-current/15 bg-white/70">
+        {icon}
+      </div>
+      <p className="font-semibold">{title}</p>
+      <p className="mt-1 text-sm opacity-75">{detail}</p>
+    </button>
   );
 }
 

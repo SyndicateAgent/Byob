@@ -268,8 +268,9 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                 stage_progress=stage_percent(completed, total),
             )
 
+        index_texts = [retrieval_index_text(chunk.content, document) for chunk in parsed_chunks]
         embeddings = await embedding_client.embed_texts(
-            [chunk.content for chunk in parsed_chunks],
+            index_texts,
             progress_callback=report_embedding_progress,
         )
         await update_document_progress(
@@ -320,6 +321,7 @@ async def process_document_by_id(settings: Settings, document_id: UUID) -> None:
                         dense_vector=embeddings[index],
                         created_at=document.created_at.isoformat(),
                         document=document,
+                        index_text=index_texts[index],
                     )
                 )
 
@@ -923,6 +925,7 @@ def build_qdrant_point(
     dense_vector: list[float],
     created_at: str,
     document: Document | None = None,
+    index_text: str | None = None,
 ) -> models.PointStruct:
     """Build a Qdrant point with dense and sparse vectors and no source content."""
 
@@ -930,7 +933,7 @@ def build_qdrant_point(
         id=str(chunk.qdrant_point_id or chunk.id),
         vector={
             "dense": dense_vector,
-            "sparse": sparse_vector(chunk.content),
+            "sparse": sparse_vector(index_text or chunk.content),
         },
         payload={
             "chunk_id": str(chunk.id),
@@ -941,6 +944,27 @@ def build_qdrant_point(
             **(document_governance_payload(document) if document is not None else {}),
         },
     )
+
+
+def retrieval_index_text(content: str, document: Document | None) -> str:
+    """Return text used for embeddings without changing persisted chunk content."""
+
+    if document is None:
+        return content
+    description = document_description(document)
+    if description is None:
+        return content
+    return f"Document description: {description}\n\n{content}"
+
+
+def document_description(document: Document) -> str | None:
+    """Return the normalized document description stored in metadata."""
+
+    value = document.metadata_.get("description")
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def sparse_vector(text: str) -> models.SparseVector:

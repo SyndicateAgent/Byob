@@ -1,8 +1,10 @@
+import json
 from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.app.core.qdrant_client import visual_collection_name
@@ -16,6 +18,7 @@ from api.app.schemas.document import (
     DocumentAssetResponse,
     DocumentAuditLogListResponse,
     DocumentBatchUploadItem,
+    DocumentBatchUploadMetadata,
     DocumentBatchUploadResponse,
     DocumentContentResponse,
     DocumentContentUpdateRequest,
@@ -48,6 +51,7 @@ from api.app.services.document_service import (
     list_document_versions,
     list_document_visual_point_ids,
     list_documents,
+    metadata_with_document_description,
     parsed_content_metadata,
     reset_document_for_reprocess,
     update_document_content_source,
@@ -65,6 +69,8 @@ BatchUploadFilesField = Annotated[list[UploadFile], File()]
 GovernanceSourceTypeField = Annotated[str, Form(min_length=1, max_length=100)]
 AuthorityLevelField = Annotated[int, Form(ge=1)]
 ReviewStatusField = Annotated[ReviewStatus, Form()]
+DescriptionField = Annotated[str | None, Form(max_length=2000)]
+BatchUploadMetadataField = Annotated[str, Form(alias="items", min_length=2)]
 BatchSkipReason = Literal["duplicate_name", "duplicate_file_hash", "empty_file"]
 
 
@@ -92,6 +98,40 @@ def governance_input(
         authority_level=authority_level,
         review_status=review_status,
     )
+
+
+def parse_batch_upload_metadata(
+    value: str,
+    *,
+    file_count: int,
+) -> list[DocumentBatchUploadMetadata]:
+    """Parse and validate per-file batch upload metadata."""
+
+    try:
+        raw_items = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="items must be a valid JSON array",
+        ) from exc
+
+    if not isinstance(raw_items, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="items must be a JSON array",
+        )
+    if len(raw_items) != file_count:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="items length must match files length",
+        )
+
+    try:
+        return [DocumentBatchUploadMetadata.model_validate(item) for item in raw_items]
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors()
+        ) from exc
 
 
 async def clear_retrieval_cache(request: Request) -> None:
@@ -153,6 +193,7 @@ async def upload_document_endpoint(
     governance_source_type: GovernanceSourceTypeField,
     authority_level: AuthorityLevelField,
     review_status: ReviewStatusField,
+    description: DescriptionField = None,
 ) -> DocumentResponse:
     """Upload a file document and enqueue ingestion."""
 
@@ -197,6 +238,7 @@ async def upload_document_endpoint(
         minio_path=object_key,
         file_hash=file_hash,
         governance=governance_input(governance_source_type, authority_level, review_status),
+        metadata=metadata_with_document_description(None, description),
         actor=current_actor(current_user),
     )
     enqueue_document(document.id)
@@ -216,9 +258,7 @@ async def upload_documents_batch_endpoint(
     current_user: CurrentUserDep,
     session: DbSession,
     files: BatchUploadFilesField,
-    governance_source_type: GovernanceSourceTypeField,
-    authority_level: AuthorityLevelField,
-    review_status: ReviewStatusField,
+    batch_metadata: BatchUploadMetadataField,
 ) -> DocumentBatchUploadResponse:
     """Upload multiple file documents and skip duplicates by name or content hash."""
 
@@ -234,12 +274,13 @@ async def upload_documents_batch_endpoint(
             detail="At least one file is required",
         )
 
-    items: list[DocumentBatchUploadItem] = []
-    for file in files:
+    per_file_metadata = parse_batch_upload_metadata(batch_metadata, file_count=len(files))
+    response_items: list[DocumentBatchUploadItem] = []
+    for file, file_metadata in zip(files, per_file_metadata, strict=True):
         filename = file.filename or "document"
         content = await file.read()
         if not content:
-            items.append(skipped_upload_item(filename=filename, reason="empty_file"))
+            response_items.append(skipped_upload_item(filename=filename, reason="empty_file"))
             continue
 
         file_hash = hash_content(content)
@@ -250,7 +291,7 @@ async def upload_documents_batch_endpoint(
             file_hash=file_hash,
         )
         if duplicate is not None:
-            items.append(
+            response_items.append(
                 skipped_upload_item(
                     filename=filename,
                     reason=duplicate.reason,
@@ -274,11 +315,16 @@ async def upload_documents_batch_endpoint(
             file_size=len(content),
             minio_path=object_key,
             file_hash=file_hash,
-            governance=governance_input(governance_source_type, authority_level, review_status),
+            governance=governance_input(
+                file_metadata.governance_source_type,
+                file_metadata.authority_level,
+                file_metadata.review_status,
+            ),
+            metadata=metadata_with_document_description(None, file_metadata.description),
             actor=current_actor(current_user),
         )
         enqueue_document(document.id)
-        items.append(
+        response_items.append(
             DocumentBatchUploadItem(
                 filename=filename,
                 status="created",
@@ -286,8 +332,8 @@ async def upload_documents_batch_endpoint(
             )
         )
 
-    created_count = sum(1 for item in items if item.status == "created")
-    skipped_count = len(items) - created_count
+    created_count = sum(1 for item in response_items if item.status == "created")
+    skipped_count = len(response_items) - created_count
     if created_count == 0:
         response.status_code = status.HTTP_200_OK
     else:
@@ -296,7 +342,7 @@ async def upload_documents_batch_endpoint(
         request_id=request.state.request_id,
         created_count=created_count,
         skipped_count=skipped_count,
-        items=items,
+        items=response_items,
     )
 
 

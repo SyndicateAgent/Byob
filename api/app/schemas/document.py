@@ -8,6 +8,7 @@ GovernanceSourceType = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
 ]
+DocumentDescription = Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)]
 ReviewStatus = Literal["draft", "reviewed", "published", "deprecated"]
 
 
@@ -28,6 +29,7 @@ class DocumentTextCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1)
+    description: DocumentDescription | None = None
     file_type: str = Field(default="txt", pattern="^(txt|md|markdown)$")
     governance_source_type: GovernanceSourceType
     authority_level: int = Field(ge=1)
@@ -42,10 +44,22 @@ class DocumentUrlCreateRequest(BaseModel):
 
     name: str | None = Field(default=None, max_length=500)
     url: AnyUrl
+    description: DocumentDescription | None = None
     governance_source_type: GovernanceSourceType
     authority_level: int = Field(ge=1)
     review_status: ReviewStatus
     metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class DocumentBatchUploadMetadata(BaseModel):
+    """Per-file governance and retrieval context for batch uploads."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    governance_source_type: GovernanceSourceType
+    authority_level: int = Field(ge=1)
+    review_status: ReviewStatus
+    description: DocumentDescription | None = None
 
 
 class DocumentGovernanceUpdateRequest(BaseModel):

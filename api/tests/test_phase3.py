@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
@@ -5,7 +6,7 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 from PIL import Image
 from pytest import MonkeyPatch
 from qdrant_client.http import models
@@ -30,6 +31,7 @@ from api.app.services.ingestion_service import (
     build_ingestion_chunks,
     build_qdrant_point,
     parsed_content_type,
+    retrieval_index_text,
     rewrite_asset_references,
     sparse_vector,
 )
@@ -51,6 +53,55 @@ def test_phase_three_routes_are_mounted() -> None:
     assert "/api/v1/documents/{document_id}/content" in paths
     assert "/api/v1/documents/{document_id}/assets" in paths
     assert "/api/v1/documents/{document_id}/assets/{asset_id}" in paths
+
+
+def test_batch_upload_metadata_parses_per_file_policy() -> None:
+    """Batch file imports require one governance payload per uploaded file."""
+
+    items = documents_api.parse_batch_upload_metadata(
+        json.dumps(
+            [
+                {
+                    "governance_source_type": "client_policy_archive",
+                    "authority_level": 1,
+                    "review_status": "published",
+                    "description": "Refund policy handbook",
+                },
+                {
+                    "governance_source_type": "support_playbook",
+                    "authority_level": 2,
+                    "review_status": "reviewed",
+                    "description": "Escalation runbook",
+                },
+            ]
+        ),
+        file_count=2,
+    )
+
+    assert items[0].governance_source_type == "client_policy_archive"
+    assert items[0].description == "Refund policy handbook"
+    assert items[1].authority_level == 2
+
+
+def test_batch_upload_metadata_requires_file_count_match() -> None:
+    """Batch metadata must stay aligned with multipart file order."""
+
+    with pytest.raises(HTTPException) as exc_info:
+        documents_api.parse_batch_upload_metadata(
+            json.dumps(
+                [
+                    {
+                        "governance_source_type": "client_policy_archive",
+                        "authority_level": 1,
+                        "review_status": "published",
+                    }
+                ]
+            ),
+            file_count=2,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "items length must match files length"
 
 
 def test_text_parser_and_chunker_create_chunks() -> None:
@@ -280,6 +331,7 @@ def test_document_schema_accepts_user_defined_governance_values() -> None:
     payload = DocumentTextCreateRequest(
         name="custom.md",
         content="hello",
+        description="  Client refund policy source  ",
         governance_source_type="  client_policy_archive  ",
         authority_level=42,
         review_status="published",
@@ -287,6 +339,52 @@ def test_document_schema_accepts_user_defined_governance_values() -> None:
 
     assert payload.governance_source_type == "client_policy_archive"
     assert payload.authority_level == 42
+    assert payload.description == "Client refund policy source"
+
+
+def test_qdrant_sparse_vector_uses_document_description_context() -> None:
+    """Document descriptions should improve recall without changing stored chunk text."""
+
+    chunk_id = uuid4()
+    document_id = uuid4()
+    kb_id = uuid4()
+    chunk = Chunk(
+        id=chunk_id,
+        document_id=document_id,
+        kb_id=kb_id,
+        chunk_index=0,
+        content="pricing terms",
+        chunk_type="text",
+        qdrant_point_id=chunk_id,
+        metadata_={},
+    )
+    document = Document(
+        id=document_id,
+        kb_id=kb_id,
+        name="contract.pdf",
+        governance_source_type="client_policy_archive",
+        authority_level=42,
+        review_status="published",
+        metadata_={"description": "refund escalation handbook"},
+    )
+    index_text = retrieval_index_text(chunk.content, document)
+
+    point = build_qdrant_point(
+        chunk,
+        dense_vector=[0.1, 0.2],
+        created_at="2026-04-30T00:00:00Z",
+        document=document,
+        index_text=index_text,
+    )
+
+    assert point.vector is not None
+    assert isinstance(point.vector, dict)
+    sparse = point.vector["sparse"]
+    assert isinstance(sparse, models.SparseVector)
+    expected = sparse_vector(index_text)
+    assert sparse.indices == expected.indices
+    assert sparse.values == expected.values
+    assert chunk.content == "pricing terms"
 
 
 def test_sparse_vector_merges_hash_index_collisions(monkeypatch: MonkeyPatch) -> None:
@@ -763,7 +861,7 @@ async def test_delete_document_removes_minio_before_db_delete(
         SimpleNamespace(
             app=SimpleNamespace(
                 state=SimpleNamespace(
-                        qdrant_client=(qdrant_client := FakeQdrantClient()),
+                    qdrant_client=(qdrant_client := FakeQdrantClient()),
                     minio_client=FakeMinioClient(),
                 )
             )
@@ -881,7 +979,7 @@ async def test_delete_knowledge_base_removes_storage_before_db_delete(
             app=SimpleNamespace(
                 state=SimpleNamespace(
                     minio_client=FakeMinioClient(),
-                        qdrant_client=(qdrant_client := FakeQdrantClient()),
+                    qdrant_client=(qdrant_client := FakeQdrantClient()),
                     redis_client=FakeRedisClient(),
                 )
             )
