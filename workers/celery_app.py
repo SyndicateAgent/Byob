@@ -22,11 +22,18 @@ celery_app.conf.update(
     accept_content=["json"],
 )
 
-if platform == "win32":
-    celery_app.conf.update(
-        worker_pool="solo",
-        worker_concurrency=1,
-    )
+
+def worker_runtime_options(platform_name: str, concurrency: int) -> dict[str, object]:
+    """Return platform-specific Celery worker pool settings."""
+
+    if platform_name == "win32":
+        return {"worker_pool": "solo", "worker_concurrency": 1}
+    return {"worker_pool": "prefork", "worker_concurrency": concurrency}
+
+
+celery_app.conf.update(
+    worker_runtime_options(platform, settings.celery_worker_concurrency),
+)
 
 
 @worker_init.connect  # type: ignore[misc]

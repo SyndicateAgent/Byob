@@ -174,18 +174,28 @@ Copy-Item .env.example .env
 - `MCP_SERVER_URL`：控制台 QA Agent 调用的 MCP HTTP 地址。
 - `AGENT_LLM_ENDPOINT_URL`：可选，配置后 `/agent` 会把 MCP 检索上下文交给 OpenAI-compatible LLM 生成答案。
 
-#### 3. 启动基础设施服务
+#### 3. 启动容器服务（含应用）
 
 ```powershell
-docker compose up -d
+docker compose up --build -d
 docker compose ps
 ```
 
-首次启动 embedding 和 rerank 服务时会下载 `BAAI/bge-m3` 与 `BAAI/bge-reranker-base` 到 Docker volume，可能需要几分钟。建议等待 `docker compose ps` 中 PostgreSQL、Redis、Qdrant、MinIO、embedding、rerank 都处于 healthy 或 running 状态后再继续。
+Compose 会启动 PostgreSQL、Redis、Qdrant、MinIO、embedding、rerank、API、Worker、MCP Streamable HTTP 和前端控制台。API 容器启动时会先执行 `alembic upgrade head`。首次启动 embedding、rerank 或后端 CLIP 时会下载模型到 Docker volume，可能需要几分钟。
+
+如果只想用容器跑基础设施，并在本机用 `start-dev.py` 跑 API、Worker、MCP 和前端，可以只启动这些服务：
+
+```powershell
+docker compose up -d postgres redis qdrant minio embedding rerank
+```
 
 如需查看日志：
 
 ```powershell
+docker compose logs -f api
+docker compose logs -f worker
+docker compose logs -f mcp
+docker compose logs -f frontend
 docker compose logs -f embedding
 docker compose logs -f rerank
 docker compose logs -f qdrant
@@ -257,7 +267,7 @@ uv run uvicorn api.app.main:app --reload
 uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO
 ```
 
-Windows 下 Worker 默认使用 Celery `solo` pool，用来避免进程池在部分 Windows 环境中出现 `billiard` handle 错误。
+Windows 下 Worker 默认使用 Celery `solo` pool，并发为 1，用来避免进程池在部分 Windows 环境中出现 `billiard` handle 错误。Linux 和容器环境默认使用 `prefork` pool，按 `CELERY_WORKER_CONCURRENCY`（默认 4）并发处理多个导入任务。
 
 #### 10. 手动启动 MCP 服务
 
@@ -597,18 +607,28 @@ Review at least these values before deployment:
 - `MCP_SERVER_URL`: Streamable HTTP MCP endpoint used by the console QA Agent.
 - `AGENT_LLM_ENDPOINT_URL`: optional OpenAI-compatible chat endpoint for generated QA Agent answers.
 
-#### 3. Start infrastructure services
+#### 3. Start container services
 
 ```powershell
-docker compose up -d
+docker compose up --build -d
 docker compose ps
 ```
 
-The first embedding and rerank startup downloads `BAAI/bge-m3` and `BAAI/bge-reranker-base` into Docker volumes, so it can take several minutes. Wait until PostgreSQL, Redis, Qdrant, MinIO, embedding, and rerank are healthy or running before processing documents.
+Compose starts PostgreSQL, Redis, Qdrant, MinIO, embedding, rerank, API, Worker, MCP Streamable HTTP, and the frontend console. The API container runs `alembic upgrade head` before starting. The first embedding, rerank, or backend CLIP startup downloads models into Docker volumes, so it can take several minutes.
+
+If you only want containerized infrastructure while running API, Worker, MCP, and frontend locally with `start-dev.py`, start just these services:
+
+```powershell
+docker compose up -d postgres redis qdrant minio embedding rerank
+```
 
 Useful logs:
 
 ```powershell
+docker compose logs -f api
+docker compose logs -f worker
+docker compose logs -f mcp
+docker compose logs -f frontend
 docker compose logs -f embedding
 docker compose logs -f rerank
 docker compose logs -f qdrant
@@ -680,7 +700,7 @@ Document parsing, chunking, embedding, and ingestion tasks require the Celery Wo
 uv run celery -A workers.celery_app.celery_app worker -Q ingestion --loglevel=INFO
 ```
 
-On Windows the worker defaults to Celery's `solo` pool to avoid process-pool handle errors in some environments.
+On Windows the worker defaults to Celery's `solo` pool with concurrency 1 to avoid process-pool handle errors in some environments. Linux and container environments default to the `prefork` pool and process multiple ingestion tasks according to `CELERY_WORKER_CONCURRENCY` (default: 4).
 
 #### 10. Start MCP manually
 

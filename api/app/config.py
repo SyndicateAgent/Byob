@@ -17,9 +17,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
-    database_url: str = Field(
-        default="postgresql+asyncpg://byob:byob@localhost:5432/byob"
-    )
+    database_url: str = Field(default="postgresql+asyncpg://byob:byob@localhost:5432/byob")
     redis_url: str = "redis://localhost:6379/0"
     qdrant_url: AnyUrl = AnyUrl("http://localhost:6333")
     qdrant_timeout_seconds: float = Field(default=60.0, ge=1.0)
@@ -69,6 +67,7 @@ class Settings(BaseSettings):
     agent_max_image_bytes: int = 2_000_000
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
+    celery_worker_concurrency: int = Field(default=4, ge=1)
 
     prometheus_metrics_enabled: bool = True
     dependency_health_checks_enabled: bool = True
@@ -84,11 +83,7 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Return configured CORS origins as a normalized list."""
 
-        return [
-            origin.strip()
-            for origin in self.cors_allowed_origins.split(",")
-            if origin.strip()
-        ]
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
 
 @lru_cache(maxsize=1)

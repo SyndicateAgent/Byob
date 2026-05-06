@@ -1,5 +1,25 @@
 name: byob
 
+x-backend-environment: &backend-environment
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-byob}:${POSTGRES_PASSWORD:-byob}@postgres:5432/${POSTGRES_DB:-byob}
+  REDIS_URL: redis://redis:6379/0
+  QDRANT_URL: http://qdrant:6333
+  MINIO_ENDPOINT_URL: http://minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+  MINIO_BUCKET: ${MINIO_BUCKET:-byob}
+  EMBEDDING_ENDPOINT_URL: http://embedding:7997
+  RERANK_ENDPOINT_URL: http://rerank:7998
+  MCP_SERVER_URL: http://mcp:8010/mcp
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  HF_HOME: /app/.cache/huggingface
+  PYTHONUNBUFFERED: "1"
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: Dockerfile
+
 services:
   postgres:
     image: postgres:16
@@ -140,6 +160,121 @@ services:
       retries: 20
       start_period: 120s
 
+  api:
+    build: *backend-build
+    image: byob-backend:local
+    container_name: byob-api
+    restart: unless-stopped
+    command:
+      [
+        "sh",
+        "-c",
+        "alembic upgrade head && uvicorn api.app.main:app --host 0.0.0.0 --port 8000",
+      ]
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - backend_cache:/app/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+      rerank:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=10).read()\"",
+        ]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 30s
+
+  worker:
+    image: byob-backend:local
+    pull_policy: never
+    container_name: byob-worker
+    restart: unless-stopped
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app.celery_app",
+        "worker",
+        "-Q",
+        "ingestion",
+        "--loglevel",
+        "${WORKER_LOG_LEVEL:-INFO}",
+      ]
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    volumes:
+      - backend_cache:/app/.cache
+    depends_on:
+      api:
+        condition: service_healthy
+
+  mcp:
+    image: byob-backend:local
+    pull_policy: never
+    container_name: byob-mcp
+    restart: unless-stopped
+    command:
+      [
+        "python",
+        "-m",
+        "api.app.mcp_server",
+        "--transport",
+        "streamable-http",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8010",
+      ]
+    env_file:
+      - .env
+    environment:
+      <<: *backend-environment
+    ports:
+      - "${MCP_PORT:-8010}:8010"
+    volumes:
+      - backend_cache:/app/.cache
+    depends_on:
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_MINIO_CONSOLE_URL: ${NEXT_PUBLIC_MINIO_CONSOLE_URL:-http://localhost:9001}
+        NEXT_PUBLIC_QDRANT_DASHBOARD_URL: ${NEXT_PUBLIC_QDRANT_DASHBOARD_URL:-http://localhost:6333/dashboard}
+    image: byob-frontend:local
+    container_name: byob-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
@@ -147,3 +282,4 @@ volumes:
   minio_data:
   embedding_cache:
   rerank_cache:
+  backend_cache:
