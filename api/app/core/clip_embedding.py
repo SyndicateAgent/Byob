@@ -103,6 +103,7 @@ class ClipEmbeddingClient:
             processor = CLIPProcessor.from_pretrained(
                 self.model,
                 local_files_only=self._local_files_only,
+                use_fast=False,
             )
             model = CLIPModel.from_pretrained(
                 self.model,

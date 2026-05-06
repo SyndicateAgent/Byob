@@ -333,6 +333,7 @@ export default function DocumentsPage() {
   const [webPageDescription, setWebPageDescription] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [filePolicies, setFilePolicies] = useState<ImportFilePolicy[]>([]);
+  const [expandedFilePolicyKeys, setExpandedFilePolicyKeys] = useState<string[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [governanceSourceType, setGovernanceSourceType] = useState("");
   const [authorityLevel, setAuthorityLevel] = useState("");
@@ -531,13 +532,25 @@ export default function DocumentsPage() {
     );
   }
 
+  function toggleFilePolicy(key: string) {
+    setExpandedFilePolicyKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
+    );
+  }
+
   function removeSelectedFile(index: number) {
     setFiles((current) => {
       const next = current.filter((_, fileIndex) => fileIndex !== index);
       if (next.length === 0) setFileInputKey((key) => key + 1);
       return next;
     });
-    setFilePolicies((current) => current.filter((_, policyIndex) => policyIndex !== index));
+    setFilePolicies((current) => {
+      const removed = current[index];
+      if (removed) {
+        setExpandedFilePolicyKeys((keys) => keys.filter((key) => key !== removed.key));
+      }
+      return current.filter((_, policyIndex) => policyIndex !== index);
+    });
   }
 
   function applyFileDefaults() {
@@ -629,6 +642,7 @@ export default function DocumentsPage() {
       setUploadProgress(100);
       setFiles([]);
       setFilePolicies([]);
+      setExpandedFilePolicyKeys([]);
       setFileDescription("");
       setFileInputKey((current) => current + 1);
       await loadDocuments();
@@ -1064,20 +1078,43 @@ export default function DocumentsPage() {
                   required
                 />
                 {filePolicies.length > 0 && (
-                  <div className="space-y-3">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-950">
+                          {formatNumber(filePolicies.length)} selected files
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Defaults apply to every file. Customize only files that need exceptions.
+                        </p>
+                      </div>
+                      <Badge variant={filePoliciesReady ? "success" : "warning"}>
+                        {filePoliciesReady ? "all ready" : "policy required"}
+                      </Badge>
+                    </div>
+                    <div className="max-h-[32rem] space-y-2 overflow-y-auto p-3 pr-2">
                     {filePolicies.map((policy, index) => (
-                      <div key={policy.key} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <div key={policy.key} className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium text-slate-950">{policy.filename}</p>
                             <p className="text-xs text-slate-500">
-                              File {formatNumber(index + 1)} · {formatNumber(files[index]?.size ?? 0)} bytes
+                              File {formatNumber(index + 1)} · {formatNumber(files[index]?.size ?? 0)} bytes ·{" "}
+                              {policy.governance_source_type || "No source type"}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant={importFilePolicyReady(policy) ? "success" : "warning"}>
                               {importFilePolicyReady(policy) ? "ready" : "policy required"}
                             </Badge>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => toggleFilePolicy(policy.key)}
+                              className="h-8 px-3"
+                            >
+                              {expandedFilePolicyKeys.includes(policy.key) ? "Done" : "Customize"}
+                            </Button>
                             <Button
                               type="button"
                               variant="outline"
@@ -1090,6 +1127,11 @@ export default function DocumentsPage() {
                             </Button>
                           </div>
                         </div>
+                        {policy.description && !expandedFilePolicyKeys.includes(policy.key) && (
+                          <p className="line-clamp-2 text-xs text-slate-500">{policy.description}</p>
+                        )}
+                        {expandedFilePolicyKeys.includes(policy.key) && (
+                          <>
                         <GovernanceFields
                           sourceType={policy.governance_source_type}
                           authorityLevel={policy.authority_level}
@@ -1107,8 +1149,11 @@ export default function DocumentsPage() {
                           maxLength={2000}
                           className="min-h-20 bg-white"
                         />
+                          </>
+                        )}
                       </div>
                     ))}
+                    </div>
                   </div>
                 )}
                 <Button type="submit" disabled={!kbId || uploading !== null || !filePoliciesReady} className="gap-2">

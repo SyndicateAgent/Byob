@@ -1,5 +1,8 @@
+import sys
+from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from qdrant_client.http import models
 
 from api.app.api.v1.retrieval import build_cache_key
@@ -149,6 +152,54 @@ async def test_clip_warmup_is_noop_when_multimodal_rag_is_disabled() -> None:
     await client.warmup()
 
     assert client.enabled is False
+
+
+def test_clip_processor_pins_slow_image_processor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLIP startup should avoid transformers' use_fast default-change warning."""
+
+    captured_processor_kwargs: dict[str, object] = {}
+
+    class FakeClipProcessor:
+        @classmethod
+        def from_pretrained(cls, model: str, **kwargs: object) -> object:
+            captured_processor_kwargs.update(kwargs)
+            return object()
+
+    class FakeClipModel:
+        @classmethod
+        def from_pretrained(cls, model: str, **kwargs: object) -> "FakeClipModel":
+            return cls()
+
+        def to(self, device: str) -> "FakeClipModel":
+            return self
+
+        def eval(self) -> None:
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)),
+    )
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=object))
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(CLIPModel=FakeClipModel, CLIPProcessor=FakeClipProcessor),
+    )
+
+    client = ClipEmbeddingClient(
+        Settings(
+            app_env="test",
+            multimodal_rag_enabled=True,
+            clip_model="test-clip-model",
+        )
+    )
+
+    client.warmup_sync()
+
+    assert captured_processor_kwargs["local_files_only"] is False
+    assert captured_processor_kwargs["use_fast"] is False
 
 
 def test_chunks_by_asset_id_links_images_to_referencing_chunks() -> None:
